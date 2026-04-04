@@ -1,0 +1,25 @@
+{
+  "name": "frontend-performance-intelligence-engine",
+  "version": "0.1.0",
+  "description": "Runtime analysis engine for frontend performance intelligence.",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "tracker",
+    "analyzer",
+    "logger",
+    "types",
+    "index.ts"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
