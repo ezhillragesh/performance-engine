@@ -1,16 +1,20 @@
 export * from "./analyzer/engine";
 export * from "./analyzer/context";
 export * from "./analyzer/rules";
+export * from "./analyzer/explain";
 export * from "./logger/store";
 export * from "./tracker/eventTracker";
 export * from "./tracker/networkTracker";
 export * from "./tracker/renderTracker";
-export * from "./types";
+export * from "./tracker/time";
+export * from "./types/events";
+export * from "./types/insights";
 
-import { analyzeEvents } from "./analyzer/engine";
-import { clearEvents, getEvents } from "./logger/store";
-import { startEventTracking, stopEventTracking } from "./tracker/eventTracker";
-import { startNetworkTracking, stopNetworkTracking } from "./tracker/networkTracker";
+import { analyzeEvents, getInsightId, type AnalyzeOptions } from "./analyzer/engine";
+import { defaultRules, type AnalysisRule } from "./analyzer/rules";
+import { clearEvents, getEvents, setMaxStoreSize } from "./logger/store";
+import { startEventTracking } from "./tracker/eventTracker";
+import { startNetworkTracking } from "./tracker/networkTracker";
 import { setRenderTrackingEnabled } from "./tracker/renderTracker";
 import type { Insight } from "./types/insights";
 
@@ -19,8 +23,17 @@ export interface PerfEngineConfig {
   trackNetwork: boolean;
   trackRenders: boolean;
   analysisIntervalMs?: number;
+  maxEvents?: number;
+  /** Additional analysis rules appended to the defaults. */
+  customRules?: AnalysisRule[];
+  /** Replace default rules entirely when true (default false). */
+  replaceDefaultRules?: boolean;
+  /** Enable debug logging of analysis internals. */
+  debug?: boolean;
   onInsights?: (insights: Insight[]) => void;
 }
+
+const INSIGHT_DEDUPE_WINDOW_MS = 60_000;
 
 export interface PerfEngineSession {
   analyzeNow: () => Insight[];
@@ -35,17 +48,32 @@ export function initPerfEngine(config: PerfEngineConfig): PerfEngineSession {
   activeSession?.stop();
   clearEvents();
 
+  if (config.maxEvents !== undefined) {
+    setMaxStoreSize(config.maxEvents);
+  }
+
   const stopEventTrackingFn = config.trackEvents ? startEventTracking() : () => undefined;
   const stopNetworkTrackingFn = config.trackNetwork ? startNetworkTracking() : () => undefined;
   setRenderTrackingEnabled(config.trackRenders);
 
+  // Build rule set
+  const rules: AnalysisRule[] = config.replaceDefaultRules
+    ? (config.customRules ?? [])
+    : [...defaultRules, ...(config.customRules ?? [])];
+
+  const analyzeOptions: AnalyzeOptions = {
+    rules,
+    debug: config.debug ?? false,
+  };
+
   const analysisIntervalMs = config.analysisIntervalMs ?? 5000;
   let latestInsights: Insight[] = [];
   let latestSerialized = "";
+  const seenInsights = new Map<string, number>();
 
   const updateInsights = (): { insights: Insight[]; changed: boolean } => {
     const events = getEvents();
-    const insights = analyzeEvents(events);
+    const insights = analyzeEvents(events, analyzeOptions);
     const serialized = JSON.stringify(insights);
     const changed = serialized !== latestSerialized;
     latestInsights = insights;
@@ -57,11 +85,26 @@ export function initPerfEngine(config: PerfEngineConfig): PerfEngineSession {
 
   const publishInsights = (): void => {
     const { insights, changed } = updateInsights();
-    if (!changed) {
-      return;
+    if (!changed) return;
+
+    const now = Date.now();
+
+    for (const [id, timestamp] of seenInsights.entries()) {
+      if (now - timestamp > INSIGHT_DEDUPE_WINDOW_MS * 2) {
+        seenInsights.delete(id);
+      }
     }
 
-    config.onInsights?.(insights);
+    const freshInsights = insights.filter((insight) => {
+      const id = getInsightId(insight);
+      const lastSeen = seenInsights.get(id);
+      seenInsights.set(id, now);
+      return !lastSeen || now - lastSeen > INSIGHT_DEDUPE_WINDOW_MS;
+    });
+
+    if (freshInsights.length === 0) return;
+
+    config.onInsights?.(freshInsights);
   };
 
   const intervalId = globalThis.setInterval(publishInsights, analysisIntervalMs);
@@ -70,7 +113,7 @@ export function initPerfEngine(config: PerfEngineConfig): PerfEngineSession {
     globalThis.clearInterval(intervalId);
     stopEventTrackingFn();
     stopNetworkTrackingFn();
-    setRenderTrackingEnabled(true);
+    setRenderTrackingEnabled(false); // BUG FIX: original had `true`
     if (activeSession === session) {
       activeSession = null;
     }

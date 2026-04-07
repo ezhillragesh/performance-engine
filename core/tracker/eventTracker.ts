@@ -1,113 +1,61 @@
-import { logEvent } from "../logger/store";
+/**
+ * UI event tracker.
+ *
+ * Listens for user interactions on the document and pushes UIEvents
+ * into the event store.
+ */
+
+import type { UIEventType } from "../types/events";
+import { pushEvent } from "../logger/store";
 import { now } from "./time";
 
-let isTracking = false;
-let clickListener: ((event: MouseEvent) => void) | null = null;
-let inputListener: ((event: Event) => void) | null = null;
-let keydownListener: ((event: KeyboardEvent) => void) | null = null;
-let changeListener: ((event: Event) => void) | null = null;
+const TRACKED_EVENTS: UIEventType[] = [
+  "click",
+  "dblclick",
+  "input",
+  "change",
+  "keydown",
+  "keyup",
+  "focus",
+  "blur",
+  "scroll",
+  "submit",
+  "pointerdown",
+  "pointerup",
+];
 
-function describeTarget(target: EventTarget | null): string {
-  if (!(target instanceof Element)) {
+function describeTarget(el: EventTarget | null): string {
+  if (!el || !(el instanceof Element)) {
     return "unknown";
   }
 
-  const tagName = target.tagName.toLowerCase();
-  const className =
-    typeof target.className === "string" ? target.className.trim() : "";
+  const tag = el.tagName.toLowerCase();
+  const id = el.id ? `#${el.id}` : "";
+  const cls = el.className && typeof el.className === "string"
+    ? `.${el.className.trim().split(/\s+/).slice(0, 2).join(".")}`
+    : "";
 
-  if (!className) {
-    return tagName;
-  }
-
-  const classSuffix = className
-    .split(/\s+/)
-    .filter(Boolean)
-    .join(".");
-
-  return `${tagName}.${classSuffix}`;
+  return `${tag}${id}${cls}` || tag;
 }
 
+/** Starts tracking UI events. Returns a cleanup function. */
 export function startEventTracking(): () => void {
-  if (isTracking || typeof document === "undefined") {
-    return stopEventTracking;
-  }
-
-  clickListener = (event: MouseEvent) => {
-    logEvent({
+  const handler = (domEvent: Event): void => {
+    pushEvent({
       type: "ui",
-      eventType: "click",
-      target: describeTarget(event.target),
+      eventType: domEvent.type as UIEventType,
+      target: describeTarget(domEvent.target),
       timestamp: now(),
     });
   };
 
-  inputListener = (event: Event) => {
-    logEvent({
-      type: "ui",
-      eventType: "input",
-      target: describeTarget(event.target),
-      timestamp: now(),
-    });
+  for (const eventType of TRACKED_EVENTS) {
+    document.addEventListener(eventType, handler, { capture: true, passive: true });
+  }
+
+  return () => {
+    for (const eventType of TRACKED_EVENTS) {
+      document.removeEventListener(eventType, handler, true);
+    }
   };
-
-  keydownListener = (event: KeyboardEvent) => {
-    logEvent({
-      type: "ui",
-      eventType: "keydown",
-      target: describeTarget(event.target),
-      key: event.key,
-      timestamp: now(),
-    });
-  };
-
-  changeListener = (event: Event) => {
-    logEvent({
-      type: "ui",
-      eventType: "change",
-      target: describeTarget(event.target),
-      timestamp: now(),
-    });
-  };
-
-  document.addEventListener("click", clickListener, true);
-  document.addEventListener("input", inputListener, true);
-  document.addEventListener("keydown", keydownListener, true);
-  document.addEventListener("change", changeListener, true);
-  isTracking = true;
-
-  return stopEventTracking;
-}
-
-export function stopEventTracking(): void {
-  if (!isTracking || typeof document === "undefined") {
-    isTracking = false;
-    clickListener = null;
-    inputListener = null;
-    keydownListener = null;
-    changeListener = null;
-    return;
-  }
-
-  if (clickListener) {
-    document.removeEventListener("click", clickListener, true);
-  }
-
-  if (inputListener) {
-    document.removeEventListener("input", inputListener, true);
-  }
-
-  if (keydownListener) {
-    document.removeEventListener("keydown", keydownListener, true);
-  }
-
-  if (changeListener) {
-    document.removeEventListener("change", changeListener, true);
-  }
-
-  clickListener = null;
-  inputListener = null;
-  keydownListener = null;
-  changeListener = null;
-  isTracking = false;
 }

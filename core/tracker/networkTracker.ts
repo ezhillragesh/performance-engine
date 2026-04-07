@@ -1,90 +1,130 @@
-import { logEvent } from "../logger/store";
+/**
+ * Network request tracker.
+ *
+ * Intercepts fetch and XMLHttpRequest to record network events.
+ */
+
+import type { HttpMethod, NetworkEvent } from "../types/events";
+import { pushEvent } from "../logger/store";
 import { now } from "./time";
 
-let originalFetch: typeof globalThis.fetch | null = null;
-let isTracking = false;
-
-function resolveUrl(input: RequestInfo | URL): string {
-  if (typeof input === "string") {
-    return input;
-  }
-
-  if (input instanceof URL) {
-    return input.toString();
-  }
-
-  if (typeof Request !== "undefined" && input instanceof Request) {
-    return input.url;
-  }
-
-  return String(input);
+function normaliseMethod(method: string | undefined): HttpMethod {
+  const upper = (method ?? "GET").toUpperCase();
+  const valid: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+  return (valid.includes(upper as HttpMethod) ? upper : "GET") as HttpMethod;
 }
 
-function resolveMethod(input: RequestInfo | URL, init?: RequestInit): string | undefined {
-  if (init?.method) {
-    return init.method;
+function shortenUrl(url: string): string {
+  try {
+    const u = new URL(url, globalThis.location?.href);
+    return u.pathname + u.search;
+  } catch {
+    return url;
   }
-
-  if (typeof Request !== "undefined" && input instanceof Request) {
-    return input.method;
-  }
-
-  return undefined;
 }
 
+/** Starts tracking network requests. Returns a cleanup function. */
 export function startNetworkTracking(): () => void {
-  if (isTracking || typeof globalThis.fetch !== "function") {
-    return stopNetworkTracking;
-  }
+  const originalFetch = globalThis.fetch;
+  const cleanups: Array<() => void> = [];
 
-  originalFetch = globalThis.fetch.bind(globalThis);
+  // ── Fetch interception ──────────────────────────────────────────
 
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = resolveUrl(input);
-    const method = resolveMethod(input, init);
+  globalThis.fetch = async function patchedFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
     const start = now();
+    const method = normaliseMethod(init?.method ?? (input instanceof Request ? input.method : undefined));
+    const url = typeof input === "string"
+      ? input
+      : input instanceof Request
+        ? input.url
+        : input.toString();
 
     try {
-      const response = await originalFetch!(input as RequestInfo, init);
-      const duration = Math.round(now() - start);
-
-      logEvent({
+      const response = await originalFetch.call(globalThis, input, init);
+      pushEvent({
         type: "network",
-        url,
-        duration,
-        timestamp: now(),
+        url: shortenUrl(url),
         method,
+        duration: Math.round(now() - start),
         status: response.status,
-        success: response.ok,
+        fromCache: false,
+        timestamp: start,
       });
-
       return response;
-    } catch (error) {
-      const duration = Math.round(now() - start);
-
-      logEvent({
+    } catch (err) {
+      pushEvent({
         type: "network",
-        url,
-        duration,
-        timestamp: now(),
+        url: shortenUrl(url),
         method,
-        success: false,
+        duration: Math.round(now() - start),
+        status: 0,
+        fromCache: false,
+        timestamp: start,
       });
-
-      throw error;
+      throw err;
     }
-  }) as typeof globalThis.fetch;
+  };
 
-  isTracking = true;
-  return stopNetworkTracking;
+  cleanups.push(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  // ── XMLHttpRequest interception ─────────────────────────────────
+
+  const XHR = globalThis.XMLHttpRequest;
+  if (XHR) {
+    const originalOpen = XHR.prototype.open;
+    const originalSend = XHR.prototype.send;
+
+    XHR.prototype.open = function patchedOpen(
+      this: XMLHttpRequest,
+      method: string,
+      url: string | URL,
+      ...rest: unknown[]
+    ): void {
+      (this as unknown as Record<string, unknown>).__perfMethod = normaliseMethod(method);
+      (this as unknown as Record<string, unknown>).__perfUrl = typeof url === "string" ? url : url.toString();
+      return (originalOpen as Function).call(this, method, url, ...rest);
+    };
+
+    XHR.prototype.send = function patchedSend(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null): void {
+      const start = now();
+      const method = ((this as unknown as Record<string, unknown>).__perfMethod ?? "GET") as HttpMethod;
+      const url = ((this as unknown as Record<string, unknown>).__perfUrl ?? "") as string;
+
+      const onDone = (): void => {
+        pushEvent({
+          type: "network",
+          url: shortenUrl(url),
+          method,
+          duration: Math.round(now() - start),
+          status: this.status,
+          fromCache: false,
+          timestamp: start,
+        });
+        this.removeEventListener("loadend", onDone);
+      };
+
+      this.addEventListener("loadend", onDone);
+      return originalSend.call(this, body);
+    };
+
+    cleanups.push(() => {
+      XHR.prototype.open = originalOpen;
+      XHR.prototype.send = originalSend;
+    });
+  }
+
+  return () => {
+    for (const cleanup of cleanups) {
+      cleanup();
+    }
+  };
 }
 
 export function stopNetworkTracking(): void {
-  if (!isTracking || !originalFetch) {
-    return;
-  }
-
-  globalThis.fetch = originalFetch;
-  originalFetch = null;
-  isTracking = false;
+  // Kept for backward compat; prefer the cleanup returned by startNetworkTracking.
 }
