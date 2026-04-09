@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Perf Intelligence DevTools",
+  "version": "0.1.0",
+  "description": "DevTools panel for frontend-performance-intelligence-engine.",
+  "permissions": ["scripting", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "devtools_page": "devtools/devtools.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["contentScript.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

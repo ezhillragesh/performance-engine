@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Perf Intelligence Panel</title>
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="toolbar">
+        <div>
+          <h1>Perf Intelligence</h1>
+          <p class="subtitle">Real-time causality insights</p>
+        </div>
+        <div class="controls">
+          <label>
+            Severity
+            <select id="severityFilter">
+              <option value="all">All</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="critical">Critical</option>
+            </select>
+          </label>
+          <label>
+            Search
+            <input id="searchInput" type="search" placeholder="Component or issue" />
+          </label>
+        </div>
+      </header>
+      <main class="layout">
+        <section class="issues" aria-label="Issues list">
+          <div class="section-header">
+            <h2>Issues</h2>
+            <span id="issueCount">0</span>
+          </div>
+          <ul id="issueList"></ul>
+        </section>
+        <section class="details" aria-label="Issue details">
+          <div class="details-placeholder" id="detailsPlaceholder">
+            <p>Select an issue to see details.</p>
+          </div>
+          <div class="details-content" id="detailsContent" hidden>
+            <div class="details-header">
+              <h2 id="detailTitle">Issue</h2>
+              <span id="detailSeverity" class="severity-chip"></span>
+            </div>
+            <p id="detailMessage" class="detail-message"></p>
+            <div class="detail-grid">
+              <div>
+                <h3>Cause</h3>
+                <p id="detailCause"></p>
+              </div>
+              <div>
+                <h3>Suggested fix</h3>
+                <p id="detailFix"></p>
+              </div>
+              <div>
+                <h3>Confidence</h3>
+                <p id="detailConfidence"></p>
+              </div>
+              <div>
+                <h3>Impact</h3>
+                <p id="detailImpact"></p>
+              </div>
+            </div>
+            <section class="timeline">
+              <div class="section-header">
+                <h3>Interaction timeline</h3>
+                <span id="timelineCount">0</span>
+              </div>
+              <ul id="timelineList"></ul>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="./panel.js"></script>
+  </body>
+</html>
