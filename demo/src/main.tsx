@@ -4,7 +4,7 @@ import './index.css'
 import App from './App.tsx'
 import { initPerfEngine } from '../../core/index'
 
-initPerfEngine({
+let session = initPerfEngine({
   trackEvents: true,
   trackNetwork: true,
   trackRenders: true,
@@ -14,9 +14,39 @@ initPerfEngine({
       return
     }
 
+    window.postMessage(
+      {
+        source: 'perf-engine',
+        type: 'INSIGHTS_UPDATE',
+        payload: insights,
+        timestamp: performance.now(),
+      },
+      '*',
+    )
+
+    window.postMessage(
+      {
+        source: 'perf-engine',
+        type: 'EVENTS_UPDATE',
+        payload: session.getEvents(),
+        timestamp: performance.now(),
+      },
+      '*',
+    )
+
     console.log('[perf-insights]', insights)
   },
 })
+
+window.postMessage(
+  {
+    source: 'perf-engine',
+    type: 'EVENTS_UPDATE',
+    payload: session.getEvents(),
+    timestamp: performance.now(),
+  },
+  '*',
+)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

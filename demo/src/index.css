@@ -31,7 +31,7 @@
 }
 
 #root {
-  width: min(1200px, 100%);
+  width: 100%;
   margin: 0 auto;
   min-height: 100svh;
 }

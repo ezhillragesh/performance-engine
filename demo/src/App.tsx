@@ -2,331 +2,379 @@ import { useEffect, useMemo, useState } from 'react'
 import { trackRender } from '../../core/index'
 import './App.css'
 
-type Product = {
+type Message = {
   id: number
-  name: string
-  category: string
-  price: number
-  score: number
+  sender: string
+  subject: string
+  preview: string
+  body: string
+  time: string
+  unread: boolean
+  starred: boolean
+  category: 'Work' | 'Finance' | 'Ops' | 'Personal'
 }
 
-const initialProducts: Product[] = Array.from({ length: 48 }, (_, index) => {
-  const categories = ['Analytics', 'Checkout', 'Search', 'Profile', 'Feed']
-  return {
-    id: index + 1,
-    name: `Module ${index + 1}`,
-    category: categories[index % categories.length],
-    price: 40 + (index % 7) * 12,
-    score: Math.round(50 + ((index * 13) % 50)),
-  }
-})
+type Task = {
+  id: number
+  title: string
+  done: boolean
+  priority: 'Low' | 'Normal' | 'High'
+}
 
-const initialEvents = Array.from({ length: 14 }, (_, index) => ({
-  id: index + 1,
-  title: `Interaction #${index + 1}`,
-  detail: 'Click triggered data refresh and component updates.',
-}))
+const seedMessages: Message[] = [
+  {
+    id: 1,
+    sender: 'Maya Chen',
+    subject: 'Q2 launch checklist',
+    preview: 'I attached the updated launch checklist and rollout notes.',
+    body: 'The rollout checklist has the revised owners, the QA gates, and the fallback steps for the launch window.',
+    time: '08:12',
+    unread: true,
+    starred: true,
+    category: 'Work',
+  },
+  {
+    id: 2,
+    sender: 'Finance Desk',
+    subject: 'Invoice batch ready',
+    preview: 'The monthly invoice batch is ready for review.',
+    body: 'Please review the invoice batch before 3 PM so we can release the payment run this afternoon.',
+    time: '09:04',
+    unread: true,
+    starred: false,
+    category: 'Finance',
+  },
+  {
+    id: 3,
+    sender: 'Ops Team',
+    subject: 'Status page update',
+    preview: 'A small status page update is scheduled for tonight.',
+    body: 'The status page copy is being refreshed for the scheduled maintenance window at 11 PM.',
+    time: '10:11',
+    unread: false,
+    starred: false,
+    category: 'Ops',
+  },
+  {
+    id: 4,
+    sender: 'Noah',
+    subject: 'Lunch next week?',
+    preview: 'Are you around next Tuesday?',
+    body: 'No pressure, just checking if you want to grab lunch next Tuesday when you are in the office.',
+    time: '10:47',
+    unread: false,
+    starred: false,
+    category: 'Personal',
+  },
+  {
+    id: 5,
+    sender: 'Support',
+    subject: 'Ticket summary',
+    preview: 'Three tickets were updated overnight.',
+    body: 'The overnight summary shows three customer tickets moved to pending with notes from the support queue.',
+    time: '11:32',
+    unread: true,
+    starred: false,
+    category: 'Work',
+  },
+]
+
+const seedTasks: Task[] = [
+  { id: 1, title: 'Review launch checklist', done: false, priority: 'High' },
+  { id: 2, title: 'Approve invoice batch', done: false, priority: 'Normal' },
+  { id: 3, title: 'Update status page copy', done: true, priority: 'Low' },
+]
 
 function App() {
   trackRender('App')
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState('All')
-  const [count, setCount] = useState(0)
-  const [pulse, setPulse] = useState(0)
-  const [autoPulse, setAutoPulse] = useState(true)
-  const [events, setEvents] = useState(initialEvents)
-  const [loading, setLoading] = useState(false)
-  const [burstSeed, setBurstSeed] = useState(0)
+  const [activeCategory, setActiveCategory] = useState<'All' | Message['category']>('All')
+  const [messages, setMessages] = useState(seedMessages)
+  const [tasks, setTasks] = useState(seedTasks)
+  const [selectedId, setSelectedId] = useState(seedMessages[0]?.id ?? 1)
+  const [drawerOpen, setDrawerOpen] = useState(true)
+  const [autoRefresh, setAutoRefresh] = useState(true)
+  const [syncTick, setSyncTick] = useState(0)
 
   useEffect(() => {
-    if (!autoPulse) {
+    if (!autoRefresh) {
       return
     }
 
     const id = window.setInterval(() => {
-      setPulse((value) => value + 1)
-    }, 450)
+      setSyncTick((value) => value + 1)
+      setMessages((current) => {
+        const next = [...current]
+        if (next.length > 0) {
+          next[0] = { ...next[0], unread: true }
+        }
+        return next
+      })
+    }, 1200)
 
     return () => window.clearInterval(id)
-  }, [autoPulse])
+  }, [autoRefresh])
 
-  const filtered = initialProducts.filter((product) => {
-    const matchesText = product.name.toLowerCase().includes(search.toLowerCase())
-    const matchesCategory = filter === 'All' || product.category === filter
-    return matchesText && matchesCategory
-  })
+  const visibleMessages = useMemo(() => {
+    const query = search.toLowerCase()
+    return messages.filter((message) => {
+      const matchesCategory = activeCategory === 'All' || message.category === activeCategory
+      const matchesQuery =
+        message.sender.toLowerCase().includes(query) ||
+        message.subject.toLowerCase().includes(query) ||
+        message.preview.toLowerCase().includes(query)
 
-  const expensiveScore = filtered.reduce((total, product) => {
-    let jitter = 0
-    for (let i = 0; i < 2500; i += 1) {
-      jitter += Math.sin(i + product.score)
+      return matchesCategory && matchesQuery
+    })
+  }, [messages, search, activeCategory])
+
+  useEffect(() => {
+    if (visibleMessages.length === 0) {
+      return
     }
-    return total + product.score + jitter
-  }, 0)
 
-  const totalImpact = useMemo(() => {
-    return Math.round(expensiveScore * 1.3)
-  }, [expensiveScore])
-
-  const triggerBurst = () => {
-    for (let i = 0; i < 8; i += 1) {
-      setBurstSeed((value) => value + 1)
+    const selectionStillVisible = visibleMessages.some((message) => message.id === selectedId)
+    if (!selectionStillVisible) {
+      setSelectedId(visibleMessages[0].id)
     }
+  }, [visibleMessages, selectedId])
+
+  const selectedMessage = visibleMessages.find((message) => message.id === selectedId) ?? visibleMessages[0]
+
+  const unreadCount = useMemo(() => {
+    let total = 0
+    for (const message of messages) {
+      total += message.unread ? 1 : 0
+      for (let i = 0; i < 1800; i += 1) {
+        Math.sqrt(i + total)
+      }
+    }
+    return total
+  }, [messages, syncTick])
+
+  const taskSummary = useMemo(() => {
+    const done = tasks.filter((task) => task.done).length
+    const pending = tasks.length - done
+    return { done, pending }
+  }, [tasks])
+
+  const markRead = (id: number) => {
+    setMessages((current) => current.map((message) => (message.id === id ? { ...message, unread: false } : message)))
   }
 
-  const simulateSlowNetwork = async () => {
-    setLoading(true)
-    const start = performance.now()
-
-    try {
-      await fetch('https://httpstat.us/200?sleep=1200')
-      const duration = Math.round(performance.now() - start)
-      setEvents((prev) => [
-        {
-          id: prev.length + 1,
-          title: 'Slow network response',
-          detail: `Response arrived after ${duration}ms.`,
-        },
-        ...prev,
-      ])
-    } catch (error) {
-      setEvents((prev) => [
-        {
-          id: prev.length + 1,
-          title: 'Network error',
-          detail: 'Failed to reach the demo endpoint.',
-        },
-        ...prev,
-      ])
-    } finally {
-      setLoading(false)
-    }
+  const toggleStar = (id: number) => {
+    setMessages((current) =>
+      current.map((message) => (message.id === id ? { ...message, starred: !message.starred } : message)),
+    )
   }
 
-  const handleCountClick = () => {
-    const start = performance.now()
-    while (performance.now() - start < 14) {
-      // Intentional sync work to create interaction latency.
-    }
-    setCount((value) => value + 1)
+  const addTask = () => {
+    setTasks((current) => [
+      ...current,
+      {
+        id: current.length + 1,
+        title: `Follow up on ${selectedMessage?.subject ?? 'message'}`,
+        done: false,
+        priority: 'Normal',
+      },
+    ])
+  }
+
+  const toggleTask = (id: number) => {
+    setTasks((current) => current.map((task) => (task.id === id ? { ...task, done: !task.done } : task)))
   }
 
   return (
-    <div className="app-shell">
-      <header className="hero">
+    <div className="workspace">
+      <aside className="sidebar">
         <div>
-          <p className="eyebrow">Frontend Performance Intelligence</p>
-          <h1>Observability Lab</h1>
-          <p className="subtitle">
-            Stress the engine with intentional render bursts, noisy inputs, and
-            slow networks.
-          </p>
+          <p className="eyebrow">Northstar Workspace</p>
+          <h1>Inbox</h1>
+          <p className="muted">Unified view for mail, tasks, and quick follow-ups.</p>
         </div>
-        <div className="hero-card">
-          <div>
-            <p className="label">UI Pulse</p>
-            <h2>{pulse}</h2>
-            <p className="muted">Auto pulse updates the entire tree.</p>
-          </div>
-          <button
-            className={autoPulse ? 'toggle active' : 'toggle'}
-            onClick={() => setAutoPulse((value) => !value)}
-          >
-            {autoPulse ? 'Pause pulse' : 'Resume pulse'}
-          </button>
-        </div>
-      </header>
 
-      <section className="grid">
-        <SearchPanel
-          search={search}
-          onSearch={setSearch}
-          filter={filter}
-          onFilter={setFilter}
-          onBurst={triggerBurst}
-          burstSeed={burstSeed}
-        />
-        <MetricsPanel
-          count={count}
-          onCount={handleCountClick}
-          totalImpact={totalImpact}
-        />
-        <NetworkPanel loading={loading} onSlowFetch={simulateSlowNetwork} />
-        <ActivityPanel events={events} />
-      </section>
-
-      <ResultsList
-        items={filtered}
-        pulse={pulse}
-        search={search}
-        filter={filter}
-      />
-    </div>
-  )
-}
-
-type SearchPanelProps = {
-  search: string
-  filter: string
-  onSearch: (value: string) => void
-  onFilter: (value: string) => void
-  onBurst: () => void
-  burstSeed: number
-}
-
-function SearchPanel({
-  search,
-  filter,
-  onSearch,
-  onFilter,
-  onBurst,
-  burstSeed,
-}: SearchPanelProps) {
-  trackRender('SearchPanel')
-  const categories = ['All', 'Analytics', 'Checkout', 'Search', 'Profile', 'Feed']
-
-  return (
-    <div className="panel">
-      <h3>Interaction Playground</h3>
-      <p className="muted">
-        Typing below re-renders multiple panels. It is intentionally unoptimized
-        to trigger render bursts.
-      </p>
-      <label className="field">
-        <span>Search modules</span>
-        <input
-          value={search}
-          onChange={(event) => onSearch(event.target.value)}
-          placeholder="Type fast to trigger re-renders"
-        />
-      </label>
-      <label className="field">
-        <span>Filter category</span>
-        <select value={filter} onChange={(event) => onFilter(event.target.value)}>
-          {categories.map((category) => (
-            <option key={category} value={category}>
-              {category}
-            </option>
+        <nav className="nav">
+          {['Inbox', 'Tasks', 'Archive', 'Team'].map((item) => (
+            <button type="button" key={item} className={item === 'Inbox' ? 'nav-item active' : 'nav-item'}>
+              {item}
+            </button>
           ))}
-        </select>
-      </label>
-      <button className="action" onClick={onBurst}>
-        Trigger render burst ({burstSeed})
-      </button>
-    </div>
-  )
-}
+        </nav>
 
-type MetricsPanelProps = {
-  count: number
-  totalImpact: number
-  onCount: () => void
-}
-
-function MetricsPanel({ count, totalImpact, onCount }: MetricsPanelProps) {
-  trackRender('MetricsPanel')
-  const cards = [
-    { label: 'Interaction Count', value: count },
-    { label: 'Impact Score', value: totalImpact },
-    { label: 'Layout Shifts', value: 18 + (count % 7) },
-  ]
-
-  return (
-    <div className="panel">
-      <div className="panel-header">
-        <h3>Live Metrics</h3>
-        <button className="ghost" onClick={onCount}>
-          Add interaction
-        </button>
-      </div>
-      <div className="card-grid">
-        {cards.map((card) => (
-          <div className="metric" key={card.label}>
-            <p className="label">{card.label}</p>
-            <h2>{card.value}</h2>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-type NetworkPanelProps = {
-  loading: boolean
-  onSlowFetch: () => void
-}
-
-function NetworkPanel({ loading, onSlowFetch }: NetworkPanelProps) {
-  trackRender('NetworkPanel')
-  return (
-    <div className="panel">
-      <h3>Network Stress</h3>
-      <p className="muted">
-        This button calls a slow endpoint so the engine can correlate a slow
-        network response with UI updates.
-      </p>
-      <button className="action" onClick={onSlowFetch} disabled={loading}>
-        {loading ? 'Fetching...' : 'Trigger slow request'}
-      </button>
-    </div>
-  )
-}
-
-type ActivityPanelProps = {
-  events: { id: number; title: string; detail: string }[]
-}
-
-function ActivityPanel({ events }: ActivityPanelProps) {
-  trackRender('ActivityPanel')
-  return (
-    <div className="panel">
-      <h3>Activity Feed</h3>
-      <ul className="feed">
-        {events.slice(0, 6).map((event) => (
-          <li key={event.id}>
-            <strong>{event.title}</strong>
-            <span>{event.detail}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-type ResultsListProps = {
-  items: Product[]
-  pulse: number
-  search: string
-  filter: string
-}
-
-function ResultsList({ items, pulse, search, filter }: ResultsListProps) {
-  trackRender('ResultsList')
-  return (
-    <section className="results">
-      <div className="results-header">
-        <div>
-          <h2>Modules</h2>
-          <p className="muted">
-            {items.length} items • filter: {filter} • query: {search || 'all'}
-          </p>
+        <div className="summary-card">
+          <span className="summary-label">Unread</span>
+          <strong>{unreadCount}</strong>
+          <span className="muted">Updated by background sync</span>
         </div>
-        <div className="pulse-chip">Pulse {pulse}</div>
-      </div>
-      <div className="results-grid">
-        {items.map((item) => (
-          <div key={item.id} className="tile">
-            <p className="label">{item.category}</p>
-            <h3>{item.name}</h3>
-            <p className="muted">Priority score {item.score}</p>
-            <div className="tile-footer">
-              <span>${item.price}</span>
-              <button className="ghost">Inspect</button>
+
+        <div className="summary-card subtle">
+          <span className="summary-label">Tasks</span>
+          <strong>{taskSummary.pending} open</strong>
+          <span className="muted">{taskSummary.done} completed today</span>
+        </div>
+      </aside>
+
+      <main className="content">
+        <header className="topbar">
+          <div className="search-shell">
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search mail, people, or subjects"
+              aria-label="Search mail"
+            />
+          </div>
+
+          <div className="controls">
+            <button
+              type="button"
+              className={drawerOpen ? 'chip active' : 'chip'}
+              onClick={() => setDrawerOpen((value) => !value)}
+            >
+              Details {drawerOpen ? 'on' : 'off'}
+            </button>
+            <button
+              type="button"
+              className={autoRefresh ? 'chip active' : 'chip'}
+              onClick={() => setAutoRefresh((value) => !value)}
+            >
+              Sync {autoRefresh ? 'on' : 'off'}
+            </button>
+          </div>
+        </header>
+
+        <section className="status-strip" aria-label="Workspace status">
+          <article className="status-card">
+            <span className="summary-label">Visible Messages</span>
+            <strong>{visibleMessages.length}</strong>
+          </article>
+          <article className="status-card">
+            <span className="summary-label">Unread</span>
+            <strong>{unreadCount}</strong>
+          </article>
+          <article className="status-card">
+            <span className="summary-label">Open Tasks</span>
+            <strong>{taskSummary.pending}</strong>
+          </article>
+        </section>
+
+        <section className="filters">
+          {(['All', 'Work', 'Finance', 'Ops', 'Personal'] as const).map((category) => (
+            <button
+              key={category}
+              type="button"
+              className={category === activeCategory ? 'filter active' : 'filter'}
+              onClick={() => setActiveCategory(category)}
+            >
+              {category}
+            </button>
+          ))}
+        </section>
+
+        <section className="mail-layout">
+          <div className="mail-list panel">
+            <div className="panel-header">
+              <h2>Messages</h2>
+              <span className="muted">{visibleMessages.length} visible</span>
+            </div>
+
+            <div className="list">
+              {visibleMessages.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No matching messages</h3>
+                  <p className="muted">Try changing the search query or selecting another category filter.</p>
+                </div>
+              ) : (
+                visibleMessages.map((message) => (
+                  <button
+                    key={message.id}
+                    type="button"
+                    className={message.id === selectedMessage?.id ? 'mail-row active' : 'mail-row'}
+                    onClick={() => setSelectedId(message.id)}
+                  >
+                    <div className="mail-row-top">
+                      <div>
+                        <strong>{message.sender}</strong>
+                        <p>{message.subject}</p>
+                      </div>
+                      <div className="mail-badges">
+                        {message.starred ? <span>★</span> : null}
+                        {message.unread ? <span className="dot" /> : null}
+                      </div>
+                    </div>
+                    <p className="muted">{message.preview}</p>
+                    <div className="mail-row-bottom">
+                      <span>{message.time}</span>
+                      <span>{message.category}</span>
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
           </div>
-        ))}
-      </div>
-    </section>
+
+          {drawerOpen ? (
+            <div className="detail-column">
+              <section className="panel detail-panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Selected</p>
+                    <h2>{selectedMessage?.subject ?? 'No message selected'}</h2>
+                  </div>
+                  <div className="detail-actions">
+                    {selectedMessage ? (
+                      <>
+                        <button type="button" className="chip" onClick={() => markRead(selectedMessage.id)}>
+                          Mark read
+                        </button>
+                        <button type="button" className="chip" onClick={() => toggleStar(selectedMessage.id)}>
+                          {selectedMessage.starred ? 'Unstar' : 'Star'}
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+
+                {selectedMessage ? (
+                  <>
+                    <div className="message-meta">
+                      <span>{selectedMessage.sender}</span>
+                      <span>{selectedMessage.time}</span>
+                    </div>
+                    <p className="body-copy">{selectedMessage.body}</p>
+                    <p className="muted">
+                      This message is surfaced in the main inbox and intentionally keeps the UI busy with category
+                      changes, star toggles, and unread syncing.
+                    </p>
+                  </>
+                ) : null}
+              </section>
+
+              <section className="panel task-panel">
+                <div className="panel-header">
+                  <h2>Follow-ups</h2>
+                  <button type="button" className="chip" onClick={addTask}>
+                    Add task
+                  </button>
+                </div>
+
+                <ul className="task-list">
+                  {tasks.map((task) => (
+                    <li key={task.id} className={task.done ? 'task done' : 'task'}>
+                      <label>
+                        <input type="checkbox" checked={task.done} onChange={() => toggleTask(task.id)} />
+                        <span>{task.title}</span>
+                      </label>
+                      <span className="priority">{task.priority}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+          ) : null}
+        </section>
+      </main>
+    </div>
   )
 }
 
