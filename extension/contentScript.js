@@ -12,8 +12,12 @@ window.addEventListener("message", (event) => {
     return;
   }
 
-  chrome.runtime.sendMessage({
-    type: "PERF_MESSAGE",
-    payload: data,
-  });
+  try {
+    chrome.runtime.sendMessage({
+      type: "PERF_MESSAGE",
+      payload: data,
+    });
+  } catch {
+    // Extension context invalidated (reload/update) — ignore.
+  }
 });

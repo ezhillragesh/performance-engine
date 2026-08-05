@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { trackRender } from '../../core/index'
+import { useRenderTracker } from './useRenderTracker'
 import './App.css'
 
 type Message = {
@@ -86,7 +86,6 @@ const seedTasks: Task[] = [
 ]
 
 function App() {
-  trackRender('App')
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState<'All' | Message['category']>('All')
   const [messages, setMessages] = useState(seedMessages)
@@ -95,6 +94,17 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [syncTick, setSyncTick] = useState(0)
+
+  useRenderTracker('App', {
+    search,
+    activeCategory,
+    selectedId,
+    drawerOpen,
+    autoRefresh,
+    messageCount: messages.length,
+    taskCount: tasks.length,
+    syncTick,
+  })
 
   useEffect(() => {
     if (!autoRefresh) {

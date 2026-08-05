@@ -17,9 +17,11 @@ const searchInput = document.getElementById("searchInput");
 let insights = [];
 let events = [];
 let selectedId = null;
+let selectedInsight = null;
 
 const port = chrome.runtime.connect({ name: "devtools" });
 port.postMessage({ type: "DEVTOOLS_INIT", tabId: chrome.devtools.inspectedWindow.tabId });
+port.postMessage({ type: "REQUEST_SNAPSHOT" });
 
 port.onMessage.addListener((message) => {
   if (message.type !== "PERF_MESSAGE") {
@@ -34,7 +36,7 @@ port.onMessage.addListener((message) => {
 
   if (payload.type === "EVENTS_UPDATE") {
     events = payload.payload;
-    renderTimeline();
+    renderTimeline(selectedInsight);
   }
 });
 
@@ -62,6 +64,7 @@ function renderIssues() {
     item.className = `issue-item${selectedId === getInsightKey(insight) ? " active" : ""}`;
     item.addEventListener("click", () => {
       selectedId = getInsightKey(insight);
+      selectedInsight = insight;
       renderDetails(insight);
       renderIssues();
     });
@@ -95,11 +98,13 @@ function renderIssues() {
   });
 
   if (!selectedId && filtered.length > 0) {
+    selectedInsight = filtered[0];
     renderDetails(filtered[0]);
     selectedId = getInsightKey(filtered[0]);
   }
 
   if (filtered.length === 0) {
+    selectedInsight = null;
     detailsContent.hidden = true;
     detailsPlaceholder.hidden = false;
   }

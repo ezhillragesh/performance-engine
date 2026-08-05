@@ -4,7 +4,7 @@
  * Intercepts fetch and XMLHttpRequest to record network events.
  */
 
-import type { HttpMethod, NetworkEvent } from "../types/events";
+import type { HttpMethod } from "../types/events";
 import { pushEvent } from "../logger/store";
 import { now } from "./time";
 
