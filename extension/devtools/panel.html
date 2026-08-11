@@ -8,11 +8,16 @@
   <body>
     <div class="app">
       <header class="toolbar">
-        <div>
+        <div class="toolbar-title">
+          <div class="status">
+            <span id="statusDot" class="status-dot waiting" aria-hidden="true"></span>
+            <span id="statusText">Waiting for data</span>
+          </div>
           <h1>Perf Intelligence</h1>
           <p class="subtitle">Real-time causality insights</p>
         </div>
         <div class="controls">
+          <button id="refreshBtn" type="button" class="toolbar-btn">Refresh</button>
           <label>
             Severity
             <select id="severityFilter">
@@ -29,11 +34,37 @@
           </label>
         </div>
       </header>
+      <div class="stats" aria-label="Issue counts by severity">
+        <div class="stat">
+          <span id="statTotal" class="stat-value">0</span>
+          <span class="stat-label">total</span>
+        </div>
+        <div class="stat critical">
+          <span id="statCritical" class="stat-value">0</span>
+          <span class="stat-label">critical</span>
+        </div>
+        <div class="stat high">
+          <span id="statHigh" class="stat-value">0</span>
+          <span class="stat-label">high</span>
+        </div>
+        <div class="stat medium">
+          <span id="statMedium" class="stat-value">0</span>
+          <span class="stat-label">medium</span>
+        </div>
+        <div class="stat low">
+          <span id="statLow" class="stat-value">0</span>
+          <span class="stat-label">low</span>
+        </div>
+      </div>
       <main class="layout">
         <section class="issues" aria-label="Issues list">
           <div class="section-header">
             <h2>Issues</h2>
             <span id="issueCount">0</span>
+          </div>
+          <div id="emptyState" class="empty-state" hidden>
+            <p class="empty-title">No issues detected yet</p>
+            <p class="empty-copy">Open the demo app and interact with it — search, toggle sync, or star messages — to generate insights.</p>
           </div>
           <ul id="issueList"></ul>
         </section>
@@ -70,6 +101,7 @@
                 <h3>Interaction timeline</h3>
                 <span id="timelineCount">0</span>
               </div>
+              <p id="timelineEmpty" class="timeline-empty" hidden>No events captured in this window.</p>
               <ul id="timelineList"></ul>
             </section>
           </div>

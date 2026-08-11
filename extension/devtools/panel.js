@@ -1,5 +1,6 @@
 const issueList = document.getElementById("issueList");
 const issueCount = document.getElementById("issueCount");
+const emptyState = document.getElementById("emptyState");
 const detailsPlaceholder = document.getElementById("detailsPlaceholder");
 const detailsContent = document.getElementById("detailsContent");
 const detailTitle = document.getElementById("detailTitle");
@@ -11,26 +12,50 @@ const detailConfidence = document.getElementById("detailConfidence");
 const detailImpact = document.getElementById("detailImpact");
 const timelineList = document.getElementById("timelineList");
 const timelineCount = document.getElementById("timelineCount");
+const timelineEmpty = document.getElementById("timelineEmpty");
 const severityFilter = document.getElementById("severityFilter");
 const searchInput = document.getElementById("searchInput");
+const refreshBtn = document.getElementById("refreshBtn");
+const statusDot = document.getElementById("statusDot");
+const statusText = document.getElementById("statusText");
+const statTotal = document.getElementById("statTotal");
+const statCritical = document.getElementById("statCritical");
+const statHigh = document.getElementById("statHigh");
+const statMedium = document.getElementById("statMedium");
+const statLow = document.getElementById("statLow");
 
 let insights = [];
 let events = [];
 let selectedId = null;
 let selectedInsight = null;
+let lastMessageAt = 0;
+let reconnectAttempt = 0;
+let port = null;
 
-const port = chrome.runtime.connect({ name: "devtools" });
-port.postMessage({ type: "DEVTOOLS_INIT", tabId: chrome.devtools.inspectedWindow.tabId });
-port.postMessage({ type: "REQUEST_SNAPSHOT" });
+function setStatus(state) {
+  statusDot.className = `status-dot ${state}`;
+  if (state === "live") {
+    statusText.textContent = "Live";
+  } else if (state === "reconnecting") {
+    statusText.textContent = "Reconnecting…";
+  } else {
+    statusText.textContent = "Waiting for data";
+  }
+}
 
-port.onMessage.addListener((message) => {
-  if (message.type !== "PERF_MESSAGE") {
+function onPortMessage(message) {
+  if (!message || message.type !== "PERF_MESSAGE") {
     return;
   }
+
+  reconnectAttempt = 0;
+  lastMessageAt = Date.now();
+  setStatus("live");
 
   const payload = message.payload;
   if (payload.type === "INSIGHTS_UPDATE") {
     insights = payload.payload;
+    renderStats();
     renderIssues();
   }
 
@@ -38,10 +63,64 @@ port.onMessage.addListener((message) => {
     events = payload.payload;
     renderTimeline(selectedInsight);
   }
+}
+
+function connect() {
+  port = chrome.runtime.connect({ name: "devtools" });
+  port.onMessage.addListener(onPortMessage);
+
+  port.onDisconnect.addListener(() => {
+    setStatus("reconnecting");
+    // MV3 service workers can be terminated; re-establish the port so the
+    // panel keeps receiving data without a manual reload.
+    const delay = Math.min(1000 + reconnectAttempt * 500, 5000);
+    reconnectAttempt += 1;
+    setTimeout(connectAndInit, delay);
+  });
+}
+
+function connectAndInit() {
+  connect();
+  if (!port) {
+    return;
+  }
+  port.postMessage({ type: "DEVTOOLS_INIT", tabId: chrome.devtools.inspectedWindow.tabId });
+  port.postMessage({ type: "REQUEST_SNAPSHOT" });
+}
+
+connectAndInit();
+
+refreshBtn.addEventListener("click", () => {
+  if (port) {
+    port.postMessage({ type: "REQUEST_SNAPSHOT" });
+  }
 });
 
 severityFilter.addEventListener("change", () => renderIssues());
 searchInput.addEventListener("input", () => renderIssues());
+
+// Keep the status honest when the inspected tab stops sending messages.
+window.setInterval(() => {
+  if (Date.now() - lastMessageAt > 10000) {
+    setStatus("waiting");
+  }
+}, 3000);
+
+function renderStats() {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const insight of insights) {
+    const severity = insight.severity;
+    if (counts[severity] !== undefined) {
+      counts[severity] += 1;
+    }
+  }
+
+  statTotal.textContent = String(insights.length);
+  statCritical.textContent = String(counts.critical);
+  statHigh.textContent = String(counts.high);
+  statMedium.textContent = String(counts.medium);
+  statLow.textContent = String(counts.low);
+}
 
 function renderIssues() {
   const severity = severityFilter.value;
@@ -57,6 +136,8 @@ function renderIssues() {
   });
 
   issueCount.textContent = String(filtered.length);
+  emptyState.hidden = filtered.length > 0;
+  issueList.hidden = filtered.length === 0;
   issueList.innerHTML = "";
 
   filtered.forEach((insight) => {
@@ -91,9 +172,14 @@ function renderIssues() {
     message.className = "issue-message";
     message.textContent = insight.message;
 
+    const meta = document.createElement("div");
+    meta.className = "issue-meta";
+    meta.textContent = `~${Math.round(insight.impact.estimatedDelayMs)}ms · ${Math.round(insight.confidence * 100)}% confidence`;
+
     item.appendChild(header);
     item.appendChild(source);
     item.appendChild(message);
+    item.appendChild(meta);
     issueList.appendChild(item);
   });
 
@@ -137,11 +223,22 @@ function renderTimeline(insight) {
 
   timelineList.innerHTML = "";
   timelineCount.textContent = String(filteredEvents.length);
+  timelineEmpty.hidden = filteredEvents.length > 0;
 
   filteredEvents.slice(0, 40).forEach((event) => {
     const item = document.createElement("li");
     item.className = "timeline-item";
-    item.textContent = formatEvent(event);
+
+    const badge = document.createElement("span");
+    badge.className = `timeline-badge ${event.type}`;
+    badge.textContent = event.type;
+
+    const text = document.createElement("span");
+    text.className = "timeline-text";
+    text.textContent = formatEvent(event);
+
+    item.appendChild(badge);
+    item.appendChild(text);
     timelineList.appendChild(item);
   });
 }
@@ -154,13 +251,13 @@ function formatImpact(insight) {
 
 function formatEvent(event) {
   if (event.type === "ui") {
-    return `${formatTimestamp(event.timestamp)} UI: ${event.eventType} on ${event.target}`;
+    return `${formatTimestamp(event.timestamp)} ${event.eventType} on ${event.target}`;
   }
   if (event.type === "render") {
-    const duration = event.durationMs ? ` (${event.durationMs}ms)` : "";
-    return `${formatTimestamp(event.timestamp)} Render: ${event.componentName}${duration}`;
+    const duration = event.durationMs ? ` · ${event.durationMs}ms` : "";
+    return `${formatTimestamp(event.timestamp)} ${event.componentName}${duration}`;
   }
-  return `${formatTimestamp(event.timestamp)} Network: ${event.url} (${event.duration}ms)`;
+  return `${formatTimestamp(event.timestamp)} ${event.url} (${event.duration}ms)`;
 }
 
 function formatTimestamp(timestamp) {

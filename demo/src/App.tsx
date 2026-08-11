@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRenderTracker } from './useRenderTracker'
 import './App.css'
 
@@ -85,6 +85,86 @@ const seedTasks: Task[] = [
   { id: 3, title: 'Update status page copy', done: true, priority: 'Low' },
 ]
 
+type Telemetry = {
+  events: number
+  ui: number
+  renders: number
+  network: number
+  insights: number
+}
+
+const EMPTY_TELEMETRY: Telemetry = { events: 0, ui: 0, renders: 0, network: 0, insights: 0 }
+
+/** Live read-out of what the perf engine is capturing right now. */
+function TelemetryBar() {
+  const [telemetry, setTelemetry] = useState<Telemetry>(EMPTY_TELEMETRY)
+
+  useEffect(() => {
+    const read = () => {
+      const session = window.__perfSession
+      if (!session) {
+        return
+      }
+
+      const events = session.getEvents()
+      let ui = 0
+      let renders = 0
+      let network = 0
+      for (const event of events) {
+        if (event.type === 'ui') ui += 1
+        else if (event.type === 'render') renders += 1
+        else network += 1
+      }
+
+      setTelemetry((prev) => {
+        const next: Telemetry = {
+          events: events.length,
+          ui,
+          renders,
+          network,
+          insights: session.getInsights().length,
+        }
+        return JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+      })
+    }
+
+    read()
+    const id = window.setInterval(read, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  return (
+    <div className="telemetry" aria-label="Live engine telemetry">
+      <div className="telemetry-head">
+        <span className="telemetry-pulse" aria-hidden="true" />
+        <span className="telemetry-title">Perf Engine</span>
+      </div>
+      <div className="telemetry-grid">
+        <div className="telemetry-item">
+          <span className="telemetry-value">{telemetry.events}</span>
+          <span className="telemetry-label">events</span>
+        </div>
+        <div className="telemetry-item">
+          <span className="telemetry-value">{telemetry.ui}</span>
+          <span className="telemetry-label">ui</span>
+        </div>
+        <div className="telemetry-item">
+          <span className="telemetry-value">{telemetry.renders}</span>
+          <span className="telemetry-label">renders</span>
+        </div>
+        <div className="telemetry-item">
+          <span className="telemetry-value">{telemetry.network}</span>
+          <span className="telemetry-label">network</span>
+        </div>
+        <div className="telemetry-item">
+          <span className="telemetry-value">{telemetry.insights}</span>
+          <span className="telemetry-label">insights</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState<'All' | Message['category']>('All')
@@ -94,6 +174,24 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [syncTick, setSyncTick] = useState(0)
+
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/') {
+        return
+      }
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        return
+      }
+      event.preventDefault()
+      searchRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   useRenderTracker('App', {
     search,
@@ -138,18 +236,15 @@ function App() {
     })
   }, [messages, search, activeCategory])
 
-  useEffect(() => {
-    if (visibleMessages.length === 0) {
-      return
+  const effectiveSelectedId = useMemo(() => {
+    if (visibleMessages.some((message) => message.id === selectedId)) {
+      return selectedId
     }
-
-    const selectionStillVisible = visibleMessages.some((message) => message.id === selectedId)
-    if (!selectionStillVisible) {
-      setSelectedId(visibleMessages[0].id)
-    }
+    return visibleMessages[0]?.id
   }, [visibleMessages, selectedId])
 
-  const selectedMessage = visibleMessages.find((message) => message.id === selectedId) ?? visibleMessages[0]
+  const selectedMessage =
+    visibleMessages.find((message) => message.id === effectiveSelectedId) ?? visibleMessages[0]
 
   const unreadCount = useMemo(() => {
     let total = 0
@@ -160,7 +255,7 @@ function App() {
       }
     }
     return total
-  }, [messages, syncTick])
+  }, [messages])
 
   const taskSummary = useMemo(() => {
     const done = tasks.filter((task) => task.done).length
@@ -204,9 +299,15 @@ function App() {
         </div>
 
         <nav className="nav">
-          {['Inbox', 'Tasks', 'Archive', 'Team'].map((item) => (
-            <button type="button" key={item} className={item === 'Inbox' ? 'nav-item active' : 'nav-item'}>
-              {item}
+          {[
+            { name: 'Inbox', badge: unreadCount },
+            { name: 'Tasks', badge: taskSummary.pending },
+            { name: 'Archive' },
+            { name: 'Team' },
+          ].map((item) => (
+            <button type="button" key={item.name} className={item.name === 'Inbox' ? 'nav-item active' : 'nav-item'}>
+              <span>{item.name}</span>
+              {item.badge !== undefined && item.badge > 0 ? <span className="nav-badge">{item.badge}</span> : null}
             </button>
           ))}
         </nav>
@@ -222,17 +323,34 @@ function App() {
           <strong>{taskSummary.pending} open</strong>
           <span className="muted">{taskSummary.done} completed today</span>
         </div>
+
+        <div className="sidebar-spacer" />
+        <TelemetryBar />
       </aside>
 
       <main className="content">
         <header className="topbar">
           <div className="search-shell">
+            <svg className="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+              <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
             <input
+              ref={searchRef}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search mail, people, or subjects"
               aria-label="Search mail"
             />
+            {search ? (
+              <button type="button" className="search-clear" aria-label="Clear search" onClick={() => setSearch('')}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            ) : null}
+            <kbd className="search-hint">/</kbd>
           </div>
 
           <div className="controls">
@@ -369,15 +487,21 @@ function App() {
                 </div>
 
                 <ul className="task-list">
-                  {tasks.map((task) => (
-                    <li key={task.id} className={task.done ? 'task done' : 'task'}>
-                      <label>
-                        <input type="checkbox" checked={task.done} onChange={() => toggleTask(task.id)} />
-                        <span>{task.title}</span>
-                      </label>
-                      <span className="priority">{task.priority}</span>
+                  {tasks.length === 0 ? (
+                    <li className="task empty">
+                      <span className="muted">No follow-ups yet — add one to get going.</span>
                     </li>
-                  ))}
+                  ) : (
+                    tasks.map((task) => (
+                      <li key={task.id} className={task.done ? 'task done' : 'task'}>
+                        <label>
+                          <input type="checkbox" checked={task.done} onChange={() => toggleTask(task.id)} />
+                          <span>{task.title}</span>
+                        </label>
+                        <span className="priority">{task.priority}</span>
+                      </li>
+                    ))
+                  )}
                 </ul>
               </section>
             </div>

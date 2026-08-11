@@ -3,8 +3,15 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { initPerfEngine } from '../../core/index'
+import type { PerfEngineSession } from '../../core/index'
 import type { Insight } from '../../core/types/insights'
 import type { TrackedEvent } from '../../core/types/events'
+
+declare global {
+  interface Window {
+    __perfSession?: PerfEngineSession
+  }
+}
 
 function publish(type: 'INSIGHTS_UPDATE' | 'EVENTS_UPDATE', payload: Insight[] | TrackedEvent[]) {
   window.postMessage(
@@ -18,12 +25,13 @@ function publish(type: 'INSIGHTS_UPDATE' | 'EVENTS_UPDATE', payload: Insight[] |
   )
 }
 
-let session = initPerfEngine({
+const session = initPerfEngine({
   trackEvents: true,
   trackNetwork: true,
   trackRenders: true,
   analysisIntervalMs: 2000,
-  onInsights: (insights) => {
+  onInsights: () => {
+    const insights = session.getInsights()
     if (insights.length === 0) {
       return
     }
@@ -33,6 +41,8 @@ let session = initPerfEngine({
     console.log('[perf-insights]', insights)
   },
 })
+
+window.__perfSession = session
 
 // Publish events periodically so the DevTools panel stays in sync even
 // when no new insights arrive (e.g. dedupe window or panel opened late).

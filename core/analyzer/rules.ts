@@ -138,32 +138,6 @@ function getAffectedComponents(chain: RenderChain | null): string[] {
   return Array.from(affected);
 }
 
-function findFirstRenderAfter(
-  events: TrackedEvent[],
-  timestamp: number,
-  maxDelayMs: number,
-): RenderEvent | null {
-  for (const event of events) {
-    if (event.timestamp < timestamp) continue;
-    if (event.timestamp - timestamp > maxDelayMs) return null;
-    if (event.type === "render") return event;
-  }
-  return null;
-}
-
-function findSlowNetworkBetween(
-  events: TrackedEvent[],
-  start: number,
-  end: number,
-): NetworkEvent | null {
-  for (const event of events) {
-    if (event.timestamp < start) continue;
-    if (event.timestamp > end) return null;
-    if (event.type === "network" && event.duration > SLOW_NETWORK_THRESHOLD_MS) return event;
-  }
-  return null;
-}
-
 function isInputEvent(uiEvent: UIEvent): boolean {
   return uiEvent.eventType === "input" || uiEvent.eventType === "keydown" || uiEvent.eventType === "change";
 }
@@ -299,24 +273,23 @@ export const interactionRenderLatencyRule: AnalysisRule = {
   name: "interaction-render-latency",
   run(context: AnalysisContext): Insight[] {
     const insights: Insight[] = [];
-    const sortedEvents = context.events;
 
     for (const interaction of context.interactions) {
-      const firstRender = findFirstRenderAfter(
-        sortedEvents,
-        interaction.uiEvent.timestamp,
-        INTERACTION_RENDER_DELAY_WINDOW_MS,
-      );
+      const windowStart = interaction.uiEvent.timestamp;
+      const firstRender =
+        interaction.renderEvents.find((event) => event.timestamp >= windowStart) ?? null;
 
       if (!firstRender) continue;
 
-      const delay = Math.round(firstRender.timestamp - interaction.uiEvent.timestamp);
+      const delay = Math.round(firstRender.timestamp - windowStart);
       if (delay < INTERACTION_RENDER_DELAY_MS) continue;
+      if (delay > INTERACTION_RENDER_DELAY_WINDOW_MS) continue;
 
-      const blockingNetwork = findSlowNetworkBetween(
-        sortedEvents,
-        interaction.uiEvent.timestamp,
-        firstRender.timestamp,
+      const blockingNetwork = interaction.networkEvents.find(
+        (event) =>
+          event.timestamp >= windowStart &&
+          event.timestamp <= firstRender.timestamp &&
+          event.duration > SLOW_NETWORK_THRESHOLD_MS,
       );
 
       const chain = selectPrimaryChain(interaction.renderChains, interaction.start, interaction.end);
