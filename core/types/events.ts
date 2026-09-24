@@ -8,6 +8,12 @@
 interface BaseEvent {
   /** Monotonic timestamp (ms) from `performance.now()`. */
   timestamp: number;
+  /** Unique identifier for this specific event. */
+  eventId: string;
+  /** Identifier linking events belonging to the same user interaction trace. */
+  traceId?: string;
+  /** Session identifier for the tracking session. */
+  sessionId: string;
 }
 
 // ── UI Events ────────────────────────────────────────────────────────

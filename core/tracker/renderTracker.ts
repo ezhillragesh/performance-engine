@@ -11,6 +11,7 @@
 import type { RenderEvent } from "../types/events";
 import { pushEvent } from "../logger/store";
 import { now } from "./time";
+import { generateEventId, getCurrentSessionId } from "./id";
 
 let enabled = false;
 
@@ -45,6 +46,8 @@ export function trackRender(
     componentName,
     durationMs,
     timestamp: now(),
+    eventId: generateEventId(),
+    sessionId: getCurrentSessionId(),
   };
 
   if (propsHash !== undefined) {

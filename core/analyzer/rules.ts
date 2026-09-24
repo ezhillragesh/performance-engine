@@ -1,10 +1,14 @@
-import type { AnalysisContext, RenderChain } from "./context";
+import type { AnalysisContext, RenderChain, InteractionTrace, InteractionWindow } from "./context";
 import type { NetworkEvent, RenderEvent, TrackedEvent, UIEvent } from "../types/events";
 import type { ImpactEstimate, Insight, Severity } from "../types/insights";
 
 export interface AnalysisRule {
   name: string;
   run(context: AnalysisContext): Insight[];
+}
+
+function isInteractionTrace(source: InteractionTrace | InteractionWindow): source is InteractionTrace {
+  return "traceId" in source;
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────
@@ -168,15 +172,25 @@ export const interactionRenderBurstRule: AnalysisRule = {
   run(context: AnalysisContext): Insight[] {
     const insights: Insight[] = [];
 
-    for (const interaction of context.interactions) {
-      if (interaction.renderEvents.length === 0) continue;
+    // Use traces if available, fall back to interactions for backward compatibility
+    const sources = context.traces.length > 0 ? context.traces : context.interactions;
 
-      const burst = getMaxRenderBurst(interaction.renderEvents, INTERACTION_RENDER_BURST_WINDOW_MS);
+    for (const source of sources) {
+      const renderEvents = isInteractionTrace(source) ? source.renders : source.renderEvents;
+      const renderChains = isInteractionTrace(source) ? source.renderChains : source.renderChains;
+      const triggerEvent = isInteractionTrace(source) ? source.trigger : source.uiEvent;
+      const startTime = isInteractionTrace(source) ? source.startTime : source.start;
+      const endTime = isInteractionTrace(source) ? source.endTime : source.end;
+      const traceId = isInteractionTrace(source) ? source.traceId : undefined;
+
+      if (renderEvents.length === 0) continue;
+
+      const burst = getMaxRenderBurst(renderEvents, INTERACTION_RENDER_BURST_WINDOW_MS);
       if (!burst || burst.count < INTERACTION_RENDER_BURST_THRESHOLD) continue;
 
-      const { topComponent } = summarizeRenderSources(interaction.renderEvents);
+      const { topComponent } = summarizeRenderSources(renderEvents);
       const burstDuration = Math.round(burst.end - burst.start);
-      const chain = selectPrimaryChain(interaction.renderChains, burst.start, burst.end);
+      const chain = selectPrimaryChain(renderChains, burst.start, burst.end);
       const rootComponent = chain?.root.componentName ?? topComponent;
       const affectedComponents = getAffectedComponents(chain);
 
@@ -196,18 +210,19 @@ export const interactionRenderBurstRule: AnalysisRule = {
         issueType: "interaction-induced-render-burst",
         severity: "high",
         source: rootComponent,
-        message: `User ${interaction.uiEvent.eventType} on ${interaction.uiEvent.target} triggered ${burst.count} renders within ${burstDuration}ms.`,
+        message: `User ${triggerEvent.eventType} on ${triggerEvent.target} triggered ${burst.count} renders within ${burstDuration}ms.`,
         cause,
         possibleFix: `Debounce updates in ${rootComponent}, isolate state closer to affected components, or memoize derived values.`,
         confidence,
         impact,
         metadata: {
           renderCount: burst.count,
-          interactionType: interaction.uiEvent.eventType,
+          interactionType: triggerEvent.eventType,
           rootComponent,
           affectedComponents,
-          timeWindowStart: interaction.start,
-          timeWindowEnd: interaction.end,
+          timeWindowStart: startTime,
+          timeWindowEnd: endTime,
+          traceId,
         },
       });
     }
@@ -223,42 +238,52 @@ export const keystrokeRenderLoopRule: AnalysisRule = {
   run(context: AnalysisContext): Insight[] {
     const insights: Insight[] = [];
 
-    for (const interaction of context.interactions) {
-      if (!isInputEvent(interaction.uiEvent)) continue;
+    const sources = context.traces.length > 0 ? context.traces : context.interactions;
 
-      const renderEvents = interaction.renderEvents.filter(
-        (event) => event.timestamp - interaction.uiEvent.timestamp <= INPUT_RENDER_WINDOW_MS,
+    for (const source of sources) {
+      const renderEvents = isInteractionTrace(source) ? source.renders : source.renderEvents;
+      const renderChains = isInteractionTrace(source) ? source.renderChains : source.renderChains;
+      const triggerEvent = isInteractionTrace(source) ? source.trigger : source.uiEvent;
+      const startTime = isInteractionTrace(source) ? source.startTime : source.start;
+      const endTime = isInteractionTrace(source) ? source.endTime : source.end;
+      const traceId = isInteractionTrace(source) ? source.traceId : undefined;
+
+      if (!isInputEvent(triggerEvent)) continue;
+
+      const filteredRenders = renderEvents.filter(
+        (event) => event.timestamp - triggerEvent.timestamp <= INPUT_RENDER_WINDOW_MS,
       );
 
-      if (renderEvents.length < INPUT_RENDER_THRESHOLD) continue;
+      if (filteredRenders.length < INPUT_RENDER_THRESHOLD) continue;
 
-      const chain = selectPrimaryChain(interaction.renderChains, interaction.start, interaction.end);
-      const rootComponent = chain?.root.componentName ?? renderEvents[0]!.componentName;
+      const chain = selectPrimaryChain(renderChains, startTime, endTime);
+      const rootComponent = chain?.root.componentName ?? filteredRenders[0]!.componentName;
       const affectedComponents = getAffectedComponents(chain);
       const confidence = clampConfidence(
-        0.6 + Math.min(0.3, renderEvents.length / 10) + (affectedComponents.length > 0 ? 0.1 : 0),
+        0.6 + Math.min(0.3, filteredRenders.length / 10) + (affectedComponents.length > 0 ? 0.1 : 0),
       );
       const impact = buildImpact(
-        Math.max(INPUT_RENDER_WINDOW_MS, estimateRenderCost(renderEvents.length)),
-        renderEvents.length,
+        Math.max(INPUT_RENDER_WINDOW_MS, estimateRenderCost(filteredRenders.length)),
+        filteredRenders.length,
       );
 
       insights.push({
         issueType: "keystroke-render-loop",
         severity: "high",
         source: rootComponent,
-        message: `Input on ${interaction.uiEvent.target} triggered ${renderEvents.length} renders within ${INPUT_RENDER_WINDOW_MS}ms.`,
+        message: `Input on ${triggerEvent.target} triggered ${filteredRenders.length} renders within ${INPUT_RENDER_WINDOW_MS}ms.`,
         cause: `Input handler updates state in ${rootComponent} on every keystroke, propagating renders to ${Math.max(1, affectedComponents.length)} component(s).`,
         possibleFix: `Debounce input updates in ${rootComponent} and isolate state from unrelated components.`,
         confidence,
         impact,
         metadata: {
-          renderCount: renderEvents.length,
-          interactionType: interaction.uiEvent.eventType,
+          renderCount: filteredRenders.length,
+          interactionType: triggerEvent.eventType,
           rootComponent,
           affectedComponents,
-          timeWindowStart: interaction.start,
-          timeWindowEnd: interaction.end,
+          timeWindowStart: startTime,
+          timeWindowEnd: endTime,
+          traceId,
         },
       });
     }
@@ -274,10 +299,20 @@ export const interactionRenderLatencyRule: AnalysisRule = {
   run(context: AnalysisContext): Insight[] {
     const insights: Insight[] = [];
 
-    for (const interaction of context.interactions) {
-      const windowStart = interaction.uiEvent.timestamp;
+    const sources = context.traces.length > 0 ? context.traces : context.interactions;
+
+    for (const source of sources) {
+      const renderEvents = isInteractionTrace(source) ? source.renders : source.renderEvents;
+      const renderChains = isInteractionTrace(source) ? source.renderChains : source.renderChains;
+      const networkEvents = isInteractionTrace(source) ? source.networkRequests : source.networkEvents;
+      const triggerEvent = isInteractionTrace(source) ? source.trigger : source.uiEvent;
+      const startTime = isInteractionTrace(source) ? source.startTime : source.start;
+      const endTime = isInteractionTrace(source) ? source.endTime : source.end;
+      const traceId = isInteractionTrace(source) ? source.traceId : undefined;
+
+      const windowStart = triggerEvent.timestamp;
       const firstRender =
-        interaction.renderEvents.find((event) => event.timestamp >= windowStart) ?? null;
+        renderEvents.find((event) => event.timestamp >= windowStart) ?? null;
 
       if (!firstRender) continue;
 
@@ -285,14 +320,14 @@ export const interactionRenderLatencyRule: AnalysisRule = {
       if (delay < INTERACTION_RENDER_DELAY_MS) continue;
       if (delay > INTERACTION_RENDER_DELAY_WINDOW_MS) continue;
 
-      const blockingNetwork = interaction.networkEvents.find(
+      const blockingNetwork = networkEvents.find(
         (event) =>
           event.timestamp >= windowStart &&
           event.timestamp <= firstRender.timestamp &&
           event.duration > SLOW_NETWORK_THRESHOLD_MS,
       );
 
-      const chain = selectPrimaryChain(interaction.renderChains, interaction.start, interaction.end);
+      const chain = selectPrimaryChain(renderChains, startTime, endTime);
       const rootComponent = chain?.root.componentName ?? firstRender.componentName;
       const affectedComponents = getAffectedComponents(chain);
 
@@ -307,7 +342,7 @@ export const interactionRenderLatencyRule: AnalysisRule = {
       const confidence = clampConfidence(
         blockingNetwork ? 0.82 : 0.55 + Math.min(0.25, delay / 300),
       );
-      const renderCount = interaction.renderEvents.length;
+      const renderCount = renderEvents.length;
       const impact = buildImpact(
         Math.max(delay, blockingNetwork?.duration ?? 0),
         renderCount > 0 ? renderCount : undefined,
@@ -318,19 +353,20 @@ export const interactionRenderLatencyRule: AnalysisRule = {
       insights.push({
         issueType: "interaction-render-latency",
         severity,
-        source: interaction.uiEvent.target,
-        message: `First render after ${interaction.uiEvent.eventType} took ${delay}ms.`,
+        source: triggerEvent.target,
+        message: `First render after ${triggerEvent.eventType} took ${delay}ms.`,
         cause,
         possibleFix,
         confidence,
         impact,
         metadata: {
           renderCount,
-          interactionType: interaction.uiEvent.eventType,
+          interactionType: triggerEvent.eventType,
           rootComponent,
           affectedComponents,
-          timeWindowStart: interaction.start,
-          timeWindowEnd: interaction.end,
+          timeWindowStart: startTime,
+          timeWindowEnd: endTime,
+          traceId,
         },
       });
     }
@@ -374,6 +410,9 @@ export const networkBlockingRenderRule: AnalysisRule = {
       );
       const impact = buildImpact(netEvent.duration, matchingRenders.length);
 
+      // Try to find traceId from related events
+      const traceId = netEvent.traceId ?? matchingRenders[0]?.traceId;
+
       insights.push({
         issueType: "network-blocking-render",
         severity: "high",
@@ -389,6 +428,7 @@ export const networkBlockingRenderRule: AnalysisRule = {
           affectedComponents,
           timeWindowStart: netEvent.timestamp,
           timeWindowEnd: windowEnd,
+          traceId,
         },
       });
     }
@@ -423,6 +463,9 @@ export const stateThrashingRule: AnalysisRule = {
               0.5 + Math.min(0.3, count / 12) + Math.min(0.2, 1 - avgGap / 80),
             );
 
+            // Get traceId from renders in this window
+            const traceId = renders[left]?.traceId;
+
             insights.push({
               issueType: "state-thrashing",
               severity: count >= 8 ? "high" : "medium",
@@ -439,6 +482,7 @@ export const stateThrashingRule: AnalysisRule = {
                 timeWindowStart: leftRender.timestamp,
                 timeWindowEnd: rightRender.timestamp,
                 dedupeKey: buildDedupeKey("state-thrashing", componentName, leftRender.timestamp),
+                traceId,
               },
             });
 
@@ -500,6 +544,9 @@ export const wastedRenderRule: AnalysisRule = {
           (renders.some((r) => r.propsHash !== undefined) ? 0.2 : 0),
       );
 
+      // Get traceId from first wasted render
+      const traceId = renders.find(r => r.timestamp >= (firstWasted ?? 0))?.traceId;
+
       insights.push({
         issueType: "wasted-render",
         severity: wastedCount >= 6 ? "high" : "medium",
@@ -516,6 +563,7 @@ export const wastedRenderRule: AnalysisRule = {
           timeWindowStart: firstWasted,
           timeWindowEnd: lastWasted,
           dedupeKey: buildDedupeKey("wasted-render", componentName, firstWasted ?? 0),
+          traceId,
         },
       });
     }

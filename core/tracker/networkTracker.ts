@@ -7,6 +7,7 @@
 import type { HttpMethod } from "../types/events";
 import { pushEvent } from "../logger/store";
 import { now } from "./time";
+import { generateEventId, getCurrentSessionId } from "./id";
 
 function normaliseMethod(method: string | undefined): HttpMethod {
   const upper = (method ?? "GET").toUpperCase();
@@ -52,6 +53,8 @@ export function startNetworkTracking(): () => void {
         status: response.status,
         fromCache: false,
         timestamp: start,
+        eventId: generateEventId(),
+        sessionId: getCurrentSessionId(),
       });
       return response;
     } catch (err) {
@@ -63,6 +66,8 @@ export function startNetworkTracking(): () => void {
         status: 0,
         fromCache: false,
         timestamp: start,
+        eventId: generateEventId(),
+        sessionId: getCurrentSessionId(),
       });
       throw err;
     }
@@ -104,6 +109,8 @@ export function startNetworkTracking(): () => void {
           status: this.status,
           fromCache: false,
           timestamp: start,
+          eventId: generateEventId(),
+          sessionId: getCurrentSessionId(),
         });
         this.removeEventListener("loadend", onDone);
       };

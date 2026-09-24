@@ -7,6 +7,7 @@ export * from "./tracker/eventTracker";
 export * from "./tracker/networkTracker";
 export * from "./tracker/renderTracker";
 export * from "./tracker/time";
+export * from "./tracker/id";
 export * from "./types/events";
 export * from "./types/insights";
 
@@ -16,6 +17,7 @@ import { clearEvents, getEvents, setMaxStoreSize } from "./logger/store";
 import { startEventTracking } from "./tracker/eventTracker";
 import { startNetworkTracking } from "./tracker/networkTracker";
 import { setRenderTrackingEnabled } from "./tracker/renderTracker";
+import { resetSessionId } from "./tracker/id";
 import type { Insight } from "./types/insights";
 
 export interface PerfEngineConfig {
@@ -47,6 +49,7 @@ let activeSession: PerfEngineSession | null = null;
 export function initPerfEngine(config: PerfEngineConfig): PerfEngineSession {
   activeSession?.stop();
   clearEvents();
+  resetSessionId();
 
   if (config.maxEvents !== undefined) {
     setMaxStoreSize(config.maxEvents);

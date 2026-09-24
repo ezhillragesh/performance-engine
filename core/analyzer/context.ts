@@ -8,6 +8,18 @@ export interface RenderChain {
   totalDurationMs: number;
 }
 
+export interface InteractionTrace {
+  traceId: string;
+  startTime: number;
+  endTime: number;
+  trigger: UIEvent;
+  events: TrackedEvent[];
+  renders: RenderEvent[];
+  networkRequests: NetworkEvent[];
+  uiEvents: UIEvent[];
+  renderChains: RenderChain[];
+}
+
 export interface InteractionWindow {
   uiEvent: UIEvent;
   start: number;
@@ -22,6 +34,7 @@ export interface InteractionWindow {
 export interface AnalysisContext {
   events: TrackedEvent[];
   interactions: InteractionWindow[];
+  traces: InteractionTrace[];
   allRenderChains: RenderChain[];
 }
 
@@ -136,9 +149,44 @@ export function buildAnalysisContext(
     }
   }
 
+  // Build InteractionTraces from interactions
+  const traces: InteractionTrace[] = [];
+  for (const interaction of interactions) {
+    // Only create a trace if there's meaningful activity (renders or network)
+    if (interaction.renderEvents.length > 0 || interaction.networkEvents.length > 0) {
+      // Use traceId from the trigger event if available, otherwise generate one
+      const traceId = interaction.uiEvent.traceId ?? `trace-${interaction.uiEvent.eventId}`;
+
+      // Collect all UI events in this window (including the trigger)
+      const uiEventsInWindow = interaction.events.filter((e): e is UIEvent => e.type === "ui");
+
+      traces.push({
+        traceId,
+        startTime: interaction.start,
+        endTime: interaction.end,
+        trigger: interaction.uiEvent,
+        events: interaction.events,
+        renders: interaction.renderEvents,
+        networkRequests: interaction.networkEvents,
+        uiEvents: uiEventsInWindow,
+        renderChains: interaction.renderChains,
+      });
+    }
+  }
+
+  // Assign traceId to events that don't have one yet (for events within a trace window)
+  for (const trace of traces) {
+    for (const event of trace.events) {
+      if (!event.traceId) {
+        event.traceId = trace.traceId;
+      }
+    }
+  }
+
   return {
     events: sortedEvents,
     interactions,
+    traces,
     allRenderChains: Array.from(chainSet.values()),
   };
 }

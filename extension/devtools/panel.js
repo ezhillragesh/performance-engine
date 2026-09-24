@@ -23,6 +23,8 @@ const statCritical = document.getElementById("statCritical");
 const statHigh = document.getElementById("statHigh");
 const statMedium = document.getElementById("statMedium");
 const statLow = document.getElementById("statLow");
+const traceSummary = document.getElementById("traceSummary");
+const traceMeta = document.getElementById("traceMeta");
 
 let insights = [];
 let events = [];
@@ -209,36 +211,138 @@ function renderDetails(insight) {
   detailConfidence.textContent = `${Math.round(insight.confidence * 100)}% confidence`;
   detailImpact.textContent = formatImpact(insight);
 
+  // Show trace summary if traceId is available
+  const traceId = insight.metadata?.traceId;
+  if (traceId) {
+    renderTraceSummary(insight, traceId);
+    traceSummary.hidden = false;
+  } else {
+    traceSummary.hidden = true;
+  }
+
   renderTimeline(insight);
 }
 
+function renderTraceSummary(insight, traceId) {
+  // Find events belonging to this trace
+  const traceEvents = events.filter((e) => e.traceId === traceId);
+  const uiEvents = traceEvents.filter((e) => e.type === "ui");
+  const renderEvents = traceEvents.filter((e) => e.type === "render");
+  const networkEvents = traceEvents.filter((e) => e.type === "network");
+
+  const traceStart = Math.min(...traceEvents.map((e) => e.timestamp));
+  const traceEnd = Math.max(...traceEvents.map((e) => e.timestamp));
+  const duration = Math.round(traceEnd - traceStart);
+
+  const trigger = uiEvents[0]?.target ?? "unknown";
+  const triggerType = uiEvents[0]?.eventType ?? "interaction";
+
+  const affectedComponents = insight.metadata?.affectedComponents ?? [];
+  const renderCount = insight.metadata?.renderCount ?? renderEvents.length;
+
+  traceMeta.innerHTML = "";
+
+  const metaItems = [
+    { label: "Interaction", value: `${triggerType}: "${trigger}"`, className: "" },
+    { label: "Duration", value: `${duration}ms`, className: "highlight" },
+    { label: "Events", value: String(traceEvents.length), className: "" },
+    { label: "UI Events", value: String(uiEvents.length), className: "" },
+    { label: "Renders", value: String(renderEvents.length), className: "" },
+    { label: "Network", value: String(networkEvents.length), className: "" },
+  ];
+
+  if (insight.impact?.estimatedDelayMs !== undefined) {
+    metaItems.push({ label: "Est. Delay", value: `${Math.round(insight.impact.estimatedDelayMs)}ms`, className: "warning" });
+  }
+  if (insight.impact?.renderCostMs !== undefined) {
+    metaItems.push({ label: "Render Cost", value: `~${Math.round(insight.impact.renderCostMs)}ms`, className: "warning" });
+  }
+  if (insight.confidence !== undefined) {
+    metaItems.push({ label: "Confidence", value: `${Math.round(insight.confidence * 100)}%`, className: "highlight" });
+  }
+
+  for (const item of metaItems) {
+    const div = document.createElement("div");
+    div.className = "trace-meta-item";
+    div.innerHTML = `
+      <div class="trace-meta-label">${item.label}</div>
+      <div class="trace-meta-value ${item.className}">${item.value}</div>
+    `;
+    traceMeta.appendChild(div);
+  }
+
+  // Store trace info for timeline rendering
+  traceSummary.dataset.traceId = traceId;
+  traceSummary.dataset.traceStart = String(traceStart);
+}
+
 function renderTimeline(insight) {
+  const traceId = insight.metadata?.traceId;
+  const traceStart = traceId ? Number(traceSummary.dataset.traceStart) : undefined;
   const windowStart = insight?.metadata?.timeWindowStart;
   const windowEnd = insight?.metadata?.timeWindowEnd;
 
   let filteredEvents = events;
-  if (windowStart !== undefined && windowEnd !== undefined) {
+
+  // Prefer traceId filtering over time window for causal trace
+  if (traceId) {
+    filteredEvents = events.filter((event) => event.traceId === traceId);
+  } else if (windowStart !== undefined && windowEnd !== undefined) {
     filteredEvents = events.filter((event) => event.timestamp >= windowStart && event.timestamp <= windowEnd);
   }
+
+  // Sort by timestamp
+  filteredEvents.sort((a, b) => a.timestamp - b.timestamp);
 
   timelineList.innerHTML = "";
   timelineCount.textContent = String(filteredEvents.length);
   timelineEmpty.hidden = filteredEvents.length > 0;
 
-  filteredEvents.slice(0, 40).forEach((event) => {
+  // Determine relevant events for highlighting
+  const affectedComponents = new Set(insight.metadata?.affectedComponents ?? []);
+  const relevantNetworkUrl = insight.source;
+  const isNetworkIssue = insight.issueType === "network-blocking-render";
+
+  filteredEvents.slice(0, 50).forEach((event) => {
     const item = document.createElement("li");
     item.className = "timeline-item";
 
+    // Highlight relevant events
+    let isRelevant = false;
+    if (event.type === "render" && affectedComponents.has(event.componentName)) {
+      isRelevant = true;
+    } else if (event.type === "network" && isNetworkIssue && event.url.includes(relevantNetworkUrl)) {
+      isRelevant = true;
+    } else if (event.type === "ui") {
+      // Always highlight the trigger event
+      isRelevant = true;
+    }
+    if (isRelevant) {
+      item.classList.add("highlighted");
+    }
+
     const badge = document.createElement("span");
     badge.className = `timeline-badge ${event.type}`;
-    badge.textContent = event.type;
+    badge.textContent = event.type.toUpperCase();
 
     const text = document.createElement("span");
     text.className = "timeline-text";
     text.textContent = formatEvent(event);
 
-    item.appendChild(badge);
-    item.appendChild(text);
+    // Add relative timing for trace events
+    if (traceStart !== undefined && traceStart > 0) {
+      const relativeMs = Math.round(event.timestamp - traceStart);
+      const relativeSpan = document.createElement("span");
+      relativeSpan.className = "trace-event-relative";
+      relativeSpan.textContent = `+${relativeMs}ms`;
+      item.appendChild(badge);
+      item.appendChild(text);
+      item.appendChild(relativeSpan);
+    } else {
+      item.appendChild(badge);
+      item.appendChild(text);
+    }
+
     timelineList.appendChild(item);
   });
 }

@@ -8,6 +8,7 @@
 import type { UIEventType } from "../types/events";
 import { pushEvent } from "../logger/store";
 import { now } from "./time";
+import { generateEventId, getCurrentSessionId } from "./id";
 
 const TRACKED_EVENTS: UIEventType[] = [
   "click",
@@ -46,6 +47,8 @@ export function startEventTracking(): () => void {
       eventType: domEvent.type as UIEventType,
       target: describeTarget(domEvent.target),
       timestamp: now(),
+      eventId: generateEventId(),
+      sessionId: getCurrentSessionId(),
     });
   };
 
