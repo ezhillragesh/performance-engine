@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": false
+  },
+  "include": ["index.ts", "session.ts", "a11y/**/*.ts", "analyzer/**/*.ts", "bridge/**/*.ts", "logger/**/*.ts", "react/**/*.ts", "runtime/**/*.ts", "trace/**/*.ts", "tracker/**/*.ts", "types/**/*.ts"],
+  "exclude": ["dist", "node_modules", "inject", "scripts", "tests", "bench", "a11y/__tests__", "a11y/browser.ts", "**/*.test.ts", "**/*.bench.ts", "vitest.config.ts"]
+}

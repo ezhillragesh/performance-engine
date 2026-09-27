@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  Dev preview of the DevTools panel with mocked chrome.* APIs and generated data.
+  ES modules do not load from file://, so serve the extension/ folder, e.g.:
+    cd extension && python -m http.server 8080   ->  http://localhost:8080/dev/preview.html
+  Params: ?theme=dark|light  ?mode=app|injected|devtools  (?state=noengine = devtools)  ?perm=deny
+  Not referenced by manifest.json.
+-->
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Perf Intelligence — Preview</title>
+    <link rel="stylesheet" href="../devtools/panel.css" />
+    <link rel="stylesheet" href="../devtools/panel/a11y.css" />
+  </head>
+  <body>
+    <div id="app" class="app"></div>
+    <script src="./fixture.js"></script>
+    <script src="./mock-chrome.js"></script>
+    <script type="module" src="../devtools/panel/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  Dev-only fixture page with deliberately broken accessibility markup. dev/mock-chrome.js loads it
+  in an off-screen iframe and runs the real vendor/a11y-audit.js against it, so the preview's
+  Accessibility tab shows realistic findings (all engines of the unified rule set run here, including
+  the vendored ibm-ace.js / axe.min.js). The page defines its own `ace` and `axe` globals on purpose:
+  the audit must leave them untouched. Not referenced by manifest.json.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Perf Demo — Inbox</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 16px; }
+      .row { display: flex; gap: 8px; align-items: center; padding: 6px 0; }
+      .fake-btn { display: inline-block; padding: 4px 8px; border: 1px solid #999; cursor: pointer; }
+      .faint { color: #b8b8b8; background: #fff; }
+    </style>
+    <script>
+      // Page-owned globals with the same names as the engines' defaults (must survive the audit).
+      var ace = { owner: "fixture-page" };
+      window.axe = { owner: "fixture-page" };
+    </script>
+  </head>
+  <body>
+    <div class="header">
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="32" height="32" />
+      <h1>Inbox</h1>
+      <a href="/settings"></a>
+      <button type="button"><svg width="12" height="12"><path d="M0 0h12v12H0z"></path></svg></button>
+    </div>
+    <h4>Folders</h4>
+    <ul>
+      <li><a href="/inbox">Primary</a></li>
+      <li><a href="/promotions">click here</a></li>
+      <li><a href="/social" tabindex="3">Social</a></li>
+    </ul>
+    <form>
+      <input type="text" name="search" placeholder="Search mail" />
+      <input type="email" id="dup" />
+      <input type="checkbox" id="dup" />
+      <select name="folder"><option>Primary</option></select>
+      <div class="fake-btn" onclick="void 0">Send</div>
+    </form>
+    <div role="buton" aria-labelledby="missing-id">Archive</div>
+    <div aria-hidden="true"><a href="/hidden">Hidden but focusable</a></div>
+    <table>
+      <tr><td>From</td><td>Subject</td></tr>
+      <tr><td>Alice</td><td>Quarterly report</td></tr>
+    </table>
+    <video src="data:video/mp4;base64," autoplay></video>
+    <div class="row"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="image" width="16" height="16" /> Attachment</div>
+    <p class="faint">Low-contrast footnote text.</p>
+    <iframe src="about:blank" width="10" height="10"></iframe>
+  </body>
+</html>

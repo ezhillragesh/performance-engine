@@ -1,0 +1,44 @@
+import { DevtoolsHint } from './DevtoolsHint'
+import { EngineStatus } from './EngineStatus'
+import { BrandMark } from './Icons'
+import { SegmentedControl, type Segment } from './SegmentedControl'
+
+export type AppTab = 'workspace' | 'lab' | 'about'
+
+const TABS: Segment<AppTab>[] = [
+  { value: 'workspace', label: 'Workspace' },
+  { value: 'lab', label: 'Scenario Lab' },
+  { value: 'about', label: 'About' },
+]
+
+export function TopBar({ tab, onTabChange }: { tab: AppTab; onTabChange: (tab: AppTab) => void }) {
+  return (
+    <header className="topbar">
+      <div className="topbar__inner">
+        <a className="brand" href="#workspace" onClick={(event) => {
+          event.preventDefault()
+          onTabChange('workspace')
+        }}>
+          <BrandMark />
+          <span className="brand__name">Northstar</span>
+          <span className="brand__tag">Perf Engine</span>
+        </a>
+
+        <SegmentedControl
+          className="topbar__tabs"
+          label="Sections"
+          mode="tabs"
+          idPrefix="app"
+          segments={TABS}
+          value={tab}
+          onChange={onTabChange}
+        />
+
+        <div className="topbar__actions">
+          <EngineStatus />
+          <DevtoolsHint />
+        </div>
+      </div>
+    </header>
+  )
+}
