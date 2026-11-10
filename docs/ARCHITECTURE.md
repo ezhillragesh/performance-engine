@@ -449,7 +449,7 @@ cd demo && npm install && npm run dev       # open the printed URL
 
 ```ts
 // entry file, imported before react-dom
-import { instrumentReact, initPerfEngine } from 'frontend-performance-intelligence-engine'
+import { instrumentReact, initPerfEngine } from 'performance-engine'
 instrumentReact()
 initPerfEngine()
 ```
@@ -457,7 +457,7 @@ initPerfEngine()
 **Accessibility in code or CI:**
 
 ```ts
-import { runA11yAudit } from 'frontend-performance-intelligence-engine'
+import { runA11yAudit } from 'performance-engine'
 const report = runA11yAudit(document)   // findings with WCAG ids, selectors, score
 ```
 

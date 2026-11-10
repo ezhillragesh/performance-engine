@@ -15,7 +15,7 @@ In short, this is an in-browser observability and diagnosis stack focused on UI 
 The intent of this project is to answer questions like:
 
 - Why did this interaction feel slow?
-- Which component is re-rendering too much?
+- Which component is re-rendering too much? 
 - Is network latency blocking UI updates?
 - Are there wasted renders or state thrashing patterns?
 

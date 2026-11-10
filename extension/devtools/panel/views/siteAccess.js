@@ -3,13 +3,13 @@
 import { h, icon, replaceChildren } from "../dom.js";
 
 export const INSTALL_SNIPPET = `// entry file, before react-dom
-import { instrumentReact, initPerfEngine } from "frontend-performance-intelligence-engine";
+import { instrumentReact, initPerfEngine } from "performance-engine";
 instrumentReact();
 initPerfEngine();`;
 
 const DEPENDENCY_SNIPPET = `// package.json of your app — the package is not on npm yet
 "dependencies": {
-  "frontend-performance-intelligence-engine": "file:../performance-engine/core"
+  "performance-engine": "file:../performance-engine/core"
 }`;
 
 const BUILD_SNIPPET = `cd performance-engine/core && npm install && npm run build
@@ -241,7 +241,7 @@ export function createSiteAccess(ctx) {
           "li",
           null,
           h("h3", { text: "Add the package" }),
-          h("p", { class: "caption", text: "frontend-performance-intelligence-engine isn't published to npm yet. Depend on the repo's core/ folder with a local path (file:) dependency:" }),
+          h("p", { class: "caption", text: "performance-engine isn't published to npm yet. Depend on the repo's core/ folder with a local path (file:) dependency:" }),
           codeBlock(DEPENDENCY_SNIPPET, "dependency"),
           h("p", { class: "caption muted", text: "The package exports its compiled dist/, so build core once before installing:" }),
           codeBlock(BUILD_SNIPPET, "build commands"),

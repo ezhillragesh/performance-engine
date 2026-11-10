@@ -1,5 +1,5 @@
 {
-  "name": "frontend-performance-intelligence-engine",
+  "name": "performance-engine",
   "version": "0.3.0",
   "description": "Runtime analysis engine for frontend performance intelligence.",
   "private": false,

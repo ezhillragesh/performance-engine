@@ -9,6 +9,7 @@ export default defineConfig({
   test: {
     include: ["a11y/__tests__/**/*.test.ts"],
     environment: "jsdom",
+    setupFiles: ["a11y/__tests__/setup.ts"],
     // perf.test.ts asserts wall-clock budgets; run files one at a time so they don't contend.
     fileParallelism: false,
   },
