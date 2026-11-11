@@ -1,12 +1,7 @@
-export type InvoiceStatus = 'Paid' | 'Pending' | 'Overdue'
+import type { ApiInvoice } from '../../mock/api'
+import { apiUrl } from '../lib/api'
 
-export interface Invoice {
-  id: string
-  customer: string
-  amount: number
-  status: InvoiceStatus
-  dueDate: string
-}
+export type Invoice = ApiInvoice
 
 interface SlowResponse {
   ms: number
@@ -15,7 +10,7 @@ interface SlowResponse {
 
 export const PAGE_SIZE = 8
 
-export const SLOW_INVOICES_URL = '/api/slow?ms=900'
+export const SLOW_INVOICES_URL = apiUrl('slow?ms=900')
 
 export async function fetchSlowInvoices(url = SLOW_INVOICES_URL): Promise<Invoice[]> {
   const response = await fetch(url)

@@ -10,8 +10,8 @@
  * The DevTools bridge is started by `initPerfEngine` itself (see
  * docs/PROTOCOL.md) — the demo never posts messages to the extension.
  */
-import { initPerfEngine, instrumentReact } from '../../core/index'
-import type { PerfEngineSession } from '../../core/index'
+import { initPerfEngine, instrumentReact } from 'performance-engine'
+import type { PerfEngineSession } from 'performance-engine'
 
 declare global {
   interface Window {

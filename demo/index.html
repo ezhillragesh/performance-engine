@@ -2,16 +2,23 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="Northstar is a demo workspace and scenario lab that generates real performance problems for the Perf Engine and its DevTools extension to diagnose." />
+    <title>Northstar · Perf Engine Demo</title>
+    <meta name="description" content="A demo workspace and scenario lab that reproduces real React performance and accessibility problems on demand, so the Perf Engine and its DevTools panel can diagnose them." />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f7" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
-    <title>Northstar · Perf Engine Demo</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Perf Engine" />
+    <meta property="og:title" content="Northstar · Perf Engine Demo" />
+    <meta property="og:description" content="Reproduce render bursts, keystroke loops, slow handlers, network-blocked renders and accessibility issues on demand, then watch the engine explain them." />
+    <meta name="twitter:card" content="summary" />
   </head>
   <body>
     <div id="root"></div>
+    <noscript>Northstar is an interactive demo and needs JavaScript.</noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

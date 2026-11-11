@@ -143,10 +143,11 @@
 }
 
 .engine-pill__unit {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 
 .engine-pill__score {
+  --score-tint: var(--color-success-soft);
   display: inline-grid;
   place-items: center;
   min-width: 34px;
@@ -154,20 +155,19 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
   font-weight: var(--weight-bold);
-  background: var(--color-success-soft);
+  /* Tint over an opaque base, not over the pill's grey fill, so the grade colour keeps 4.5:1. */
+  background: linear-gradient(var(--score-tint), var(--score-tint)), var(--color-bg-elevated);
   color: var(--color-success);
-  transition:
-    background-color var(--duration) var(--ease),
-    color var(--duration) var(--ease);
+  transition: color var(--duration) var(--ease);
 }
 
 .engine-pill__score[data-grade='needs-improvement'] {
-  background: var(--color-warning-soft);
+  --score-tint: var(--color-warning-soft);
   color: var(--color-warning);
 }
 
 .engine-pill__score[data-grade='poor'] {
-  background: var(--color-danger-soft);
+  --score-tint: var(--color-danger-soft);
   color: var(--color-danger);
 }
 

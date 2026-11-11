@@ -1,20 +1,12 @@
-export type MessageCategory = 'Work' | 'Finance' | 'Ops' | 'Personal'
+import type { ApiMessage, MessageCategory } from '../../mock/api'
+import { apiUrl } from '../lib/api'
+
+export type { MessageCategory }
 export type CategoryFilter = 'All' | MessageCategory
 export type WorkspaceView = 'inbox' | 'starred' | 'tasks' | 'archive'
 
-/** Mirrors `ApiMessage` in server/mockApi.ts. */
-export interface Message {
-  id: number
-  sender: string
-  subject: string
-  preview: string
-  body: string
-  time: string
-  unread: boolean
-  starred: boolean
-  archived: boolean
-  category: MessageCategory
-}
+/** Shape returned by `api/messages` (mock/api.ts). */
+export type Message = ApiMessage
 
 export type TaskPriority = 'Low' | 'Normal' | 'High'
 
@@ -35,7 +27,7 @@ export const SEED_TASKS: Task[] = [
   { id: 3, title: 'Update status page copy', done: true, priority: 'Low' },
 ]
 
-export const MESSAGES_URL = '/api/messages?delay=350'
+export const MESSAGES_URL = apiUrl('messages?delay=350')
 
 export async function fetchMessages(signal: AbortSignal): Promise<Message[]> {
   const response = await fetch(MESSAGES_URL, { signal })

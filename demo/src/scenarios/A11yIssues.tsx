@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import type { A11yReport } from '../../../core/index'
+import type { A11yReport } from 'performance-engine'
 import { a11yOutcome } from './detection'
 import { ScenarioCard } from './ScenarioCard'
 
@@ -176,7 +176,7 @@ export function A11yIssuesScenario() {
       title="Accessibility issues"
       issueTypes={['a11y audit']}
       description="Missing alt text, an unnamed icon button, an unlabeled input, duplicate ids, a skipped heading level, “click here” link text, low-contrast text and a table without headers."
-      expectation="Not a perf insight: open the Accessibility tab to see these findings. Run audits this card with the same rules; the badge counts the issues."
+      expectation="Not a perf insight: open the Accessibility tab to see these findings. Run audits this card with the same rules and the badge counts the issues. The first run loads the rule engines, a one-time long task the perf engine reports."
       fixDescription="Accessible markup — the audit of this card reports no issues (possible issues only a person can confirm are listed as “to review”)."
       status={outcome?.status ?? 'idle'}
       statusLabel={outcome?.label}

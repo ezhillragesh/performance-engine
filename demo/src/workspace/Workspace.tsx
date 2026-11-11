@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
+import { runDetached } from 'performance-engine'
 import { useHeavyMode } from '../scenarios/useHeavyMode'
 import { PanelIcon } from '../shell/Icons'
 import { Toggle } from '../shell/Toggle'
@@ -23,6 +25,16 @@ import { StatTiles } from './StatTiles'
 import { TaskPanel } from './TaskPanel'
 
 const SYNC_INTERVAL_MS = 4000
+
+/**
+ * Applies a state update the user did not cause (page-load data, background
+ * sync) synchronously and outside any live trace. Otherwise React renders it
+ * in a later task, inside whatever click or keystroke happens to be in flight,
+ * and the engine would count those renders as that interaction's work.
+ */
+function applyUntraced(update: () => void): void {
+  runDetached(() => flushSync(update))
+}
 const MAX_MESSAGES = 60
 
 const VIEW_COPY: Record<WorkspaceView, { title: string; lede: string }> = {
@@ -50,10 +62,11 @@ export function Workspace() {
   useEffect(() => {
     const controller = new AbortController()
     fetchMessages(controller.signal).then(
-      (data) => {
-        setMessages(data)
-        setLoad({ status: 'ready' })
-      },
+      (data) =>
+        applyUntraced(() => {
+          setMessages(data)
+          setLoad({ status: 'ready' })
+        }),
       (error: unknown) => {
         if (controller.signal.aborted) return
         setLoad({ status: 'error', message: error instanceof Error ? error.message : 'Network error' })
@@ -70,7 +83,7 @@ export function Workspace() {
     const interval = window.setInterval(() => {
       const incoming = createIncomingMessage(sequence, Date.now())
       sequence += 1
-      setMessages((current) => [incoming, ...current].slice(0, MAX_MESSAGES))
+      applyUntraced(() => setMessages((current) => [incoming, ...current].slice(0, MAX_MESSAGES)))
     }, SYNC_INTERVAL_MS)
     return () => window.clearInterval(interval)
   }, [syncOn])

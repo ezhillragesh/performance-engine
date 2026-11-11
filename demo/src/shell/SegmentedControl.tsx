@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 
 export interface Segment<T extends string> {
   value: T
@@ -30,11 +30,31 @@ export function SegmentedControl<T extends string>({
   idPrefix,
 }: SegmentedControlProps<T>) {
   const isTabs = mode === 'tabs'
+
+  // Tabs pattern (WAI-ARIA APG): one tab stop; arrows, Home and End move and activate.
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = segments.findIndex((segment) => segment.value === value)
+    const last = segments.length - 1
+    const target =
+      event.key === 'ArrowRight' ? (index >= last ? 0 : index + 1)
+      : event.key === 'ArrowLeft' ? (index <= 0 ? last : index - 1)
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? last
+      : -1
+    const next = segments[target]
+    if (!next) return
+    event.preventDefault()
+    onChange(next.value)
+    const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    buttons[target]?.focus()
+  }
+
   return (
     <div
       className={`segmented${className ? ` ${className}` : ''}`}
       role={isTabs ? 'tablist' : 'group'}
       aria-label={label}
+      onKeyDown={isTabs ? onTabKeyDown : undefined}
     >
       {segments.map((segment) => {
         const selected = segment.value === value
@@ -47,6 +67,7 @@ export function SegmentedControl<T extends string>({
             id={isTabs && idPrefix ? `${idPrefix}-tab-${segment.value}` : undefined}
             aria-controls={isTabs && idPrefix ? `${idPrefix}-panel-${segment.value}` : undefined}
             aria-selected={isTabs ? selected : undefined}
+            tabIndex={isTabs && !selected ? -1 : undefined}
             aria-pressed={isTabs ? undefined : selected}
             data-selected={selected ? 'true' : undefined}
             onClick={() => onChange(segment.value)}

@@ -11,7 +11,8 @@
 
 .pipeline {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  /* One column on phones: two 170px columns leave each step a few words per line. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: var(--space-3);
 }
 

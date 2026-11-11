@@ -1,4 +1,5 @@
 import type { ReactNode, Ref } from 'react'
+import { runDetached } from 'performance-engine'
 import type { ScenarioStatus } from './useScenarioRun'
 
 interface ScenarioCardProps {
@@ -80,15 +81,15 @@ export function ScenarioCard({
   const headingId = `scenario-${id}-title`
 
   return (
-    <article ref={cardRef} className="scenario-card" aria-labelledby={headingId} data-status={status}>
+    <article ref={cardRef} className="scenario-card" aria-labelledby={headingId} data-scenario={id} data-status={status}>
       <header className="scenario-card__header">
         <span className="scenario-card__index" aria-hidden="true">
           {String(index).padStart(2, '0')}
         </span>
         <div className="scenario-card__heading">
-          <h3 id={headingId} className="scenario-card__title">
+          <h2 id={headingId} className="scenario-card__title">
             {title}
-          </h3>
+          </h2>
           <div className="chip-row">
             {issueTypes.map((type) => (
               <code key={type} className="chip chip--mono">
@@ -135,7 +136,9 @@ export function ScenarioCard({
             type="button"
             className="toggle"
             aria-pressed={fixed === true}
-            onClick={onToggleFixed}
+            // Harness, not the scenario: swapping implementations mounts a new subtree, and
+            // that must not show up as the toggle click's render burst in the traces.
+            onClick={() => runDetached(onToggleFixed)}
           >
             <span className="toggle__track" aria-hidden="true">
               <span className="toggle__thumb" />

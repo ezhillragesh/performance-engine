@@ -38,15 +38,15 @@ export function EngineStatus() {
 
   return (
     <div className="engine">
-      <div className="engine-pill" data-state={paused ? 'paused' : 'recording'} aria-live="polite">
+      <div className="engine-pill" data-state={paused ? 'paused' : 'recording'}>
         <span className="engine-pill__dot" aria-hidden="true" />
         <span className="engine-pill__state">{paused ? 'Paused' : 'Recording'}</span>
         <span className="engine-pill__sep" aria-hidden="true" />
         <span className="engine-pill__metric tabular" title="Events captured this session">
-          {eventCount.toLocaleString()} <span className="engine-pill__unit">events</span>
+          {eventCount.toLocaleString()} <span className="engine-pill__unit">{eventCount === 1 ? 'event' : 'events'}</span>
         </span>
         <span className="engine-pill__metric engine-pill__metric--wide tabular" title="Current insights">
-          {insightCount} <span className="engine-pill__unit">insights</span>
+          {insightCount} <span className="engine-pill__unit">{insightCount === 1 ? 'insight' : 'insights'}</span>
         </span>
         <span className="engine-pill__score tabular" data-grade={grade} title={`Health score · ${GRADE_LABEL[grade] ?? grade}`}>
           {score}

@@ -445,7 +445,7 @@
 }
 
 .task-row[data-done] .task-row__title {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   text-decoration: line-through;
 }
 

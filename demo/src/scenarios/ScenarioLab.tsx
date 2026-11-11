@@ -65,7 +65,7 @@ function RunAllControl() {
             Run all scenarios
           </button>
         )}
-        <span className="run-all__label truncate" aria-live="polite">
+        <span className="run-all__label truncate" role="status" aria-atomic="true">
           {running && current
             ? `Running ${state.index + 1} of ${SCENARIOS.length} · ${current.title}`
             : state.kind === 'done'

@@ -1,4 +1,4 @@
-import type { A11yReport, Insight, IssueType } from '../../../core/index'
+import type { A11yReport, Insight, IssueType } from 'performance-engine'
 import type { ScenarioStatus } from './useScenarioRun'
 
 export interface Expectation {

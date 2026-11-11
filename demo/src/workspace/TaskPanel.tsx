@@ -39,19 +39,21 @@ export const TaskPanel = memo(function TaskPanel({ tasks, onAdd, onToggle, onRem
         </span>
       </header>
 
-      <form className="task-form" onSubmit={submit}>
+      <form className="task-form" aria-label="Add a follow-up" onSubmit={submit}>
         <label htmlFor={inputId} className="visually-hidden">
           New follow-up
         </label>
         <input
           id={inputId}
           className="input"
+          type="text"
+          name="title"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Add a follow-up…"
           autoComplete="off"
         />
-        <select className="select" value={priority} aria-label="Priority" onChange={(event) => setPriority(event.target.value as TaskPriority)}>
+        <select className="select" name="priority" value={priority} aria-label="Priority" onChange={(event) => setPriority(event.target.value as TaskPriority)}>
           {PRIORITIES.map((value) => (
             <option key={value} value={value}>
               {value}

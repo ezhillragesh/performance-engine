@@ -25,6 +25,8 @@ const HealthySearch = memo(function HealthySearch({ inputRef }: { inputRef: RefO
         <input
           ref={inputRef}
           className="input"
+          type="text"
+          name="city-filter"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Type a city…"

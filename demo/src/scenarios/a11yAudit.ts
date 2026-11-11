@@ -15,7 +15,7 @@ import {
   type A11yStandard,
   type AceLike,
   type AxeLike,
-} from '../../../core/index'
+} from 'performance-engine'
 
 /** Standard the card is audited against (same default as the DevTools tab). */
 export const CARD_STANDARD: A11yStandard = { profile: 'wcag', version: '2.2', level: 'AA', bestPractices: true, includeReview: true }

@@ -75,21 +75,24 @@
   --color-text-secondary: #5f5f66; /* 6.1:1 on white */
   --color-text-tertiary: #86868b;
   --color-text-on-accent: #ffffff;
+  --color-text-on-fill: #5f5f66; /* small text on --color-fill (tags) */
 
   --color-separator: rgba(60, 60, 67, 0.14);
   --color-separator-strong: rgba(60, 60, 67, 0.26);
 
   --accent: #007aff;
   --accent-strong: #0066d6; /* button fill: 5.3:1 with white text */
+  --accent-strong-hover: #0058c2; /* hover darkens: 6.6:1 (the brighter --accent is only 4.0:1) */
   --accent-text: #0062cc;
   --accent-soft: rgba(0, 122, 255, 0.1);
   --accent-ring: rgba(0, 122, 255, 0.45);
 
-  --color-success: #248a3d;
+  /* Text on the matching -soft fill must reach 4.5:1 (badges, tags). */
+  --color-success: #1b7a33; /* ~4.8:1 on success-soft */
   --color-success-soft: rgba(52, 199, 89, 0.14);
-  --color-warning: #b25000;
+  --color-warning: #9a4500; /* ~5.7:1 on warning-soft */
   --color-warning-soft: rgba(255, 149, 0, 0.16);
-  --color-danger: #d70015;
+  --color-danger: #c4001a; /* ~5.3:1 on danger-soft */
   --color-danger-soft: rgba(255, 59, 48, 0.12);
 
   /* Elevation — soft, layered */
@@ -115,12 +118,14 @@
     --color-text: #f5f5f7;
     --color-text-secondary: #a1a1a6; /* 7.4:1 on #1c1c1e */
     --color-text-tertiary: #7c7c80;
+    --color-text-on-fill: #c7c7cc;
 
     --color-separator: rgba(84, 84, 88, 0.5);
     --color-separator-strong: rgba(120, 120, 128, 0.6);
 
     --accent: #0a84ff;
-    --accent-strong: #0a72e0;
+    --accent-strong: #0a72e0; /* 4.7:1 with white text */
+    --accent-strong-hover: #0862c4; /* 5.9:1 */
     --accent-text: #409cff;
     --accent-soft: rgba(10, 132, 255, 0.18);
     --accent-ring: rgba(10, 132, 255, 0.6);
@@ -129,7 +134,7 @@
     --color-success-soft: rgba(48, 209, 88, 0.16);
     --color-warning: #ff9f0a;
     --color-warning-soft: rgba(255, 159, 10, 0.16);
-    --color-danger: #ff453a;
+    --color-danger: #ff6961; /* 4.5:1+ on danger-soft over dark surfaces */
     --color-danger-soft: rgba(255, 69, 58, 0.16);
 
     --shadow-xs: 0 0 0 1px rgba(255, 255, 255, 0.04);

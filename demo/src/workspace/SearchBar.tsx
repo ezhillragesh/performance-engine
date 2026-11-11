@@ -17,8 +17,11 @@ export const SearchBar = memo(function SearchBar({ value, onChange }: SearchBarP
       if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
         return
       }
+      // Pages stay mounted while hidden; only take "/" when the field is on screen.
+      const input = inputRef.current
+      if (!input?.checkVisibility()) return
       event.preventDefault()
-      inputRef.current?.focus()
+      input.focus()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -31,6 +34,7 @@ export const SearchBar = memo(function SearchBar({ value, onChange }: SearchBarP
         ref={inputRef}
         className="search__input"
         type="search"
+        name="q"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {

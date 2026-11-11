@@ -193,10 +193,14 @@ strong {
   background: var(--color-bg-elevated);
   box-shadow: var(--shadow-md);
   transform: translateY(-200%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .skip-link:focus-visible {
   transform: none;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

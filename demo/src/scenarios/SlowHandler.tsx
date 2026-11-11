@@ -53,7 +53,7 @@ export function SlowHandlerScenario() {
         <div className="slider-field">
           <div className="slider-field__row">
             <label htmlFor={sliderId}>Blocking time</label>
-            <output htmlFor={sliderId} className="tabular">
+            <output htmlFor={sliderId} className="tabular" aria-label="Blocking time in milliseconds">
               {blockMs} ms
             </output>
           </div>
@@ -61,6 +61,7 @@ export function SlowHandlerScenario() {
             id={sliderId}
             className="slider"
             type="range"
+            name="blocking-time"
             min={50}
             max={600}
             step={10}

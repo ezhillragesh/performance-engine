@@ -1,11 +1,11 @@
 const PIPELINE = [
   {
     name: 'Trackers',
-    text: 'DOM interactions, fetch/XHR, long animation frames, Event Timing latency and per-instance React renders via instrumentReact().',
+    text: 'DOM interactions, fetch/XHR, long animation frames, Event Timing latency, Web Vitals and per-instance React renders via instrumentReact().',
   },
   {
     name: 'Trace context',
-    text: 'A click or keystroke opens a causal trace. Work started inside it — including network responses — keeps the same traceId.',
+    text: 'A click or keystroke opens a causal trace. Work started inside it, including network responses, keeps the same traceId. App actions get named traces with trackAction(): this demo names its tab switches that way.',
   },
   {
     name: 'Analyzer',
@@ -23,6 +23,7 @@ const PIPELINE = [
 
 const SHORTCUTS: Array<[string, string]> = [
   ['1 · 2 · 3', 'Switch between Workspace, Scenario Lab and About'],
+  ['← →', 'Move between the section tabs once one has focus'],
   ['/', 'Focus the inbox search'],
   ['Esc', 'Clear the search, or close the DevTools popover'],
 ]
@@ -80,8 +81,9 @@ export function About() {
             </li>
           </ol>
           <p className="text-secondary about-note">
-            Render durations are only real in development builds, so run the demo with <code>npm run dev</code> for the
-            slow-component scenario.
+            Render durations come from React’s profiler timing. <code>npm run dev</code> and the default production build
+            (React’s profiling bundle) both record them; a build with <code>DEMO_REACT_PROFILING=0</code> does not, so its
+            slow-component card says it cannot fire.
           </p>
         </section>
 

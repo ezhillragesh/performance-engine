@@ -12,7 +12,7 @@ export const TaskRow = memo(function TaskRow({ task, onToggle, onRemove }: TaskR
   const checkboxId = `task-${task.id}`
   return (
     <li className="task-row" data-done={task.done ? 'true' : undefined}>
-      <input id={checkboxId} className="checkbox" type="checkbox" checked={task.done} onChange={() => onToggle(task.id)} />
+      <input id={checkboxId} className="checkbox" type="checkbox" name={checkboxId} checked={task.done} onChange={() => onToggle(task.id)} />
       <label htmlFor={checkboxId} className="task-row__title truncate">
         {task.title}
       </label>

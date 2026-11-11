@@ -6,28 +6,35 @@ import { useScenarioRun } from './useScenarioRun'
 
 const SAMPLE_TEXT = 'performance budget'
 
-/* INTENTIONAL PROBLEM: each dependent panel burns ~3ms of CPU per render. */
+/*
+ * INTENTIONAL PROBLEM: each dependent panel burns ~3ms of CPU per render of
+ * non-empty text (an empty field is free, so opening the Lab costs nothing).
+ */
+
+function panelWork(text: string): void {
+  if (text) busyWait(3)
+}
 
 function WordCount({ text }: { text: string }) {
-  busyWait(3)
+  panelWork(text)
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
   return <Metric label="Words" value={words} />
 }
 
 function VowelRatio({ text }: { text: string }) {
-  busyWait(3)
+  panelWork(text)
   const vowels = (text.match(/[aeiou]/gi) ?? []).length
   return <Metric label="Vowels" value={text.length ? `${Math.round((vowels / text.length) * 100)}%` : '—'} />
 }
 
 function LongestWord({ text }: { text: string }) {
-  busyWait(3)
+  panelWork(text)
   const longest = text.split(/\s+/).reduce((best, word) => (word.length > best.length ? word : best), '')
   return <Metric label="Longest" value={longest || '—'} />
 }
 
 function Reversed({ text }: { text: string }) {
-  busyWait(3)
+  panelWork(text)
   return <Metric label="Reversed" value={text.split('').reverse().join('') || '—'} />
 }
 
@@ -88,6 +95,8 @@ const KeystrokeWorkbench = memo(function KeystrokeWorkbench({
         <input
           ref={inputRef}
           className="input"
+          type="text"
+          name="keystroke-sample"
           value={text}
           onChange={(event) => setText(event.target.value)}
           placeholder="Start typing…"
@@ -121,7 +130,7 @@ export function KeystrokeLoopScenario() {
       title="Keystroke render loop"
       issueTypes={['keystroke-render-loop']}
       description="Every keystroke updates state that feeds four derived panels, each doing ~3ms of real CPU work."
-      expectation="Keystroke render loop on the input: 5+ renders (Panels, WordCount, VowelRatio…) within 120ms of each keystroke."
+      expectation="Keystroke render loop on the input: every keystroke re-renders Panels and its four children (~12ms of work) within 120ms."
       fixDescription="Panels are memoized and read a 300ms-debounced value, so a keystroke renders only the input."
       status={run.status}
       match={run.match}

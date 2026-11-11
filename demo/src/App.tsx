@@ -1,15 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { trackAction } from 'performance-engine'
 import { About } from './about/About'
 import { ScenarioLab } from './scenarios/ScenarioLab'
 import { TopBar, type AppTab } from './shell/TopBar'
 import { Workspace } from './workspace/Workspace'
 
-const TAB_KEYS: Record<string, AppTab> = { '1': 'workspace', '2': 'lab', '3': 'about' }
 const TAB_ORDER: AppTab[] = ['workspace', 'lab', 'about']
+const TAB_KEYS: Record<string, AppTab> = { '1': 'workspace', '2': 'lab', '3': 'about' }
+const TAB_NAMES: Record<AppTab, string> = { workspace: 'Workspace', lab: 'Scenario Lab', about: 'About' }
 
-function readInitialTab(): AppTab {
+/*
+ * Every page stays mounted; switching tabs only toggles `hidden`. That keeps
+ * Workspace and Lab state across tabs, and a tab switch re-renders just the
+ * top bar instead of mounting a whole page inside the click's trace (which the
+ * engine would rightly report as a render burst). Hoisted elements are
+ * referentially stable, so App re-renders never reach the pages.
+ */
+const PAGES: Record<AppTab, ReactNode> = {
+  workspace: <Workspace />,
+  lab: <ScenarioLab />,
+  about: <About />,
+}
+
+function tabFromHash(): AppTab | null {
   const hash = window.location.hash.replace('#', '')
-  return TAB_ORDER.find((tab) => tab === hash) ?? 'workspace'
+  return TAB_ORDER.find((tab) => tab === hash) ?? null
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -18,12 +33,19 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<AppTab>(readInitialTab)
+  const [tab, setTab] = useState<AppTab>(() => tabFromHash() ?? 'workspace')
 
-  const changeTab = (next: AppTab) => {
-    setTab(next)
-    window.history.replaceState(null, '', `#${next}`)
+  /*
+   * Navigation is an app action, so it gets its own named trace in DevTools
+   * ("action "Open Scenario Lab""), whichever click, shortcut or hash change
+   * caused it. Without `newTrace` the renders would belong to the triggering
+   * event, and a keyboard shortcut would read like typing that re-renders the app.
+   */
+  const navigate = (next: AppTab, updateHash: boolean) => {
+    trackAction(`Open ${TAB_NAMES[next]}`, () => setTab(next), { newTrace: true })
+    if (updateHash) window.history.replaceState(null, '', `#${next}`)
   }
+  const changeTab = (next: AppTab) => navigate(next, true)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -31,25 +53,37 @@ export default function App() {
       const next = TAB_KEYS[event.key]
       if (!next) return
       event.preventDefault()
-      setTab(next)
-      window.history.replaceState(null, '', `#${next}`)
+      navigate(next, true)
+    }
+    // Links such as `#about` and manual hash edits; other hashes (in-page anchors) are ignored.
+    const onHashChange = () => {
+      const next = tabFromHash()
+      if (next) navigate(next, false)
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('hashchange', onHashChange)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('hashchange', onHashChange)
+    }
   }, [])
 
   return (
     <div className="app">
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
       <TopBar tab={tab} onTabChange={changeTab} />
       <main id="main" className="app__main" tabIndex={-1}>
-        <div id={`app-panel-${tab}`} className="app__panel" role="tabpanel" aria-labelledby={`app-tab-${tab}`}>
-          {tab === 'workspace' ? <Workspace /> : null}
-          {tab === 'lab' ? <ScenarioLab /> : null}
-          {tab === 'about' ? <About /> : null}
-        </div>
+        {TAB_ORDER.map((page) => (
+          <div
+            key={page}
+            id={`app-panel-${page}`}
+            className="app__panel"
+            role="tabpanel"
+            aria-labelledby={`app-tab-${page}`}
+            hidden={page !== tab}
+          >
+            {PAGES[page]}
+          </div>
+        ))}
       </main>
     </div>
   )

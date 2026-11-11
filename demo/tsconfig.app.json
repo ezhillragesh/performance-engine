@@ -15,6 +15,8 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
+    /* The demo imports core by its package name; vite.config.ts aliases it to the source. */
+    "paths": { "performance-engine": ["../core/index.ts"] },
 
     /* Linting */
     "strict": true,

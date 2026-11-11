@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { PerfSnapshot } from '../../../core/index'
+import type { PerfSnapshot } from 'performance-engine'
 import { session } from '../perf'
 
 /*
