@@ -33,6 +33,9 @@ export function createStore() {
     vitals: null, // Web Vitals from the page collector (every mode)
     page: null, // { origin, href, title } from the page collector
     injection: { origin: null, enabled: false, granted: false, known: false, pending: null, message: null },
+    // Page collector health for this document: `blocked` once eval kept failing (chrome:// pages,
+    // the Web Store, other extensions: Chrome refuses DevTools extensions there).
+    collector: { ok: false, failures: 0, blocked: false, error: null },
     ui: initialUi(),
     notice: null, // transient banner text
     limitedBannerDismissed: false,
@@ -71,9 +74,14 @@ export function createStore() {
     get limited() {
       return store.dataMode === "devtools";
     },
-    /** Vitals for the displayed data. */
+    /**
+     * Vitals for the displayed data: the imported bundle's, else the engine's (v0.4+, with
+     * attribution such as the INP interaction's trace), else the panel's own collector.
+     */
     get vitals() {
-      return state.imported ? state.imported.vitals || null : state.vitals;
+      if (state.imported) return state.imported.vitals || null;
+      const engine = hasEngine() ? state.live.snapshot?.vitals : null;
+      return engine || state.vitals;
     },
     get readOnly() {
       return !!state.imported;
@@ -171,6 +179,19 @@ export function createStore() {
     setPage(page) {
       state.page = page;
       store.emit("status");
+    },
+    /** Collector poll result: `{ ok, error? }`. */
+    setCollectorStatus({ ok, error }) {
+      const c = state.collector;
+      const next = ok ? { ok: true, failures: 0, blocked: false, error: null } : { ok: c.ok, failures: c.failures + 1, blocked: !c.ok && c.failures + 1 >= 3, error: error || null };
+      const changed = next.blocked !== c.blocked;
+      state.collector = next;
+      if (changed) store.emit("status");
+    },
+    resetCollectorStatus() {
+      const was = state.collector.blocked;
+      state.collector = { ok: false, failures: 0, blocked: false, error: null };
+      if (was) store.emit("status");
     },
     setInjection(patch) {
       Object.assign(state.injection, patch);

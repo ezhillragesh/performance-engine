@@ -1,4 +1,4 @@
-import { h, s, icon, replaceChildren, ellipsis } from "../dom.js";
+import { h, s, icon, replaceChildren, ellipsis, copyButton } from "../dom.js";
 import {
   formatMs,
   formatPct,
@@ -11,7 +11,8 @@ import {
   shortUrl,
   safeMax,
 } from "../format.js";
-import { activitySeries, mergeComponentStats } from "../derive.js";
+import { activitySeries, mergeComponentStats, renderTimingMissing } from "../derive.js";
+import { sessionMarkdown } from "../report.js";
 import { VITALS, rateVital, formatVital, vitalThresholds } from "../vitals.js";
 
 // Budgets that can only be measured with render data from the engine.
@@ -34,8 +35,18 @@ export function createOverviewView(ctx) {
       h(
         "div",
         { class: "overview-grid" },
-        h("div", { class: "card card-score" }, scoreRing(sum, limited), kpiTiles(sum, ctx, limited)),
-        vitalsCard(ctx.store.vitals, ctx.store.state.imported),
+        h(
+          "div",
+          { class: "card card-score" },
+          scoreRing(sum, limited),
+          kpiTiles(sum, ctx, limited),
+          h(
+            "div",
+            { class: "score-actions" },
+            copyButton({ label: "Copy summary", title: "Copy a Markdown performance report (score, vitals, budgets, top insights) for an issue or PR", className: "btn btn-small", getText: () => sessionMarkdown(ctx.store.data.snapshot, { ...ctx.actions.reportContext(), vitals: ctx.store.vitals }) }),
+          ),
+        ),
+        vitalsCard(ctx.store.vitals, ctx.store.state.imported, ctx),
         h(
           "div",
           { class: "card card-activity" },
@@ -43,7 +54,7 @@ export function createOverviewView(ctx) {
           sparkline(activitySeries(snap.events, 60)),
         ),
         budgetsCard(sum.budgets, ctx, limited),
-        limited ? needsEngineCard(ctx) : topComponentsCard(mergeComponentStats(sum.topComponents, snap.events).slice(0, 8), ctx),
+        limited ? needsEngineCard(ctx) : topComponentsCard(mergeComponentStats(sum.topComponents, snap.events).slice(0, 8), ctx, renderTimingMissing(snap.events)),
         topRequestsCard(sum.topRequests.slice(0, 8), ctx),
       ),
     );
@@ -188,12 +199,13 @@ function budgetsCard(budgets, ctx, limited) {
   );
 }
 
-function topComponentsCard(rows, ctx) {
+function topComponentsCard(rows, ctx, noTiming) {
   const max = safeMax(rows.map((r) => r.totalMs), 1) || 1;
   return h(
     "div",
     { class: "card card-mini" },
     h("div", { class: "card-head" }, h("h2", { text: "Top components" }), h("button", { type: "button", class: "btn-link", onClick: () => ctx.actions.setView("components"), text: "All" })),
+    noTiming ? h("p", { class: "caption muted", title: "React production builds report renders but not their duration; component names are usually minified.", text: "Production React build: no render timings." }) : null,
     rows.length
       ? h(
           "table",
@@ -246,8 +258,10 @@ function topRequestsCard(rows, ctx) {
 }
 
 
-function vitalsCard(vitals, imported) {
+function vitalsCard(vitals, imported, ctx) {
   const v = vitals || {};
+  const inpAttr = v.attribution?.inp;
+  const inpTrace = inpAttr?.traceId && ctx.store.data.snapshot?.tracesById.get(inpAttr.traceId) ? inpAttr.traceId : null;
   const tiles = VITALS.map((meta) => {
     const value = v[meta.key];
     const rating = rateVital(meta, value);
@@ -278,7 +292,8 @@ function vitalsCard(vitals, imported) {
   });
   const notes = [];
   if (v.lcpTarget) notes.push(`LCP element ${v.lcpTarget}`);
-  if (v.interactions) notes.push(`INP from ${formatCount(v.interactions)} interaction${v.interactions === 1 ? "" : "s"}`);
+  if (inpAttr) notes.push(`INP ${inpAttr.name} on ${inpAttr.target}`);
+  else if (v.interactions) notes.push(`INP from ${formatCount(v.interactions)} interaction${v.interactions === 1 ? "" : "s"}`);
   return h(
     "div",
     { class: "card card-vitals" },
@@ -287,6 +302,7 @@ function vitalsCard(vitals, imported) {
       { class: "card-head" },
       h("h2", { text: "Web Vitals" }),
       ellipsis(vitals ? notes.join(" · ") || "This page load" : imported ? "Not included in this bundle" : "Waiting for the page…", "caption muted card-note"),
+      inpTrace ? h("button", { type: "button", class: "btn-link", title: "Open the causal trace of the slowest interaction", onClick: () => ctx.actions.openTrace(inpTrace), text: "INP trace" }) : null,
     ),
     h("div", { class: "vitals" }, tiles),
   );

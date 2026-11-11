@@ -336,3 +336,18 @@ export function packRows(items, getStart, getEnd, maxRows = 8, gap = 0) {
     return row;
   });
 }
+
+/**
+ * True when renders were recorded but none carries a duration: React production builds call the
+ * DevTools hook (so renders, wasted renders and component names are seen) but don't measure
+ * render time. Component names are usually minified there too.
+ */
+export function renderTimingMissing(events) {
+  let renders = 0;
+  for (const e of events) {
+    if (e.type !== "render") continue;
+    renders += 1;
+    if (e.durationMs > 0 || e.selfDurationMs > 0) return false;
+  }
+  return renders >= 5;
+}

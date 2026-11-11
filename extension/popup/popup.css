@@ -1,0 +1,61 @@
+/* Toolbar popup. Tokens, .btn, .mode-dot and .caption come from ../devtools/panel.css. */
+
+html, body { height: auto; }
+body { overflow: auto; width: 340px; }
+
+.popup { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+
+.pp-head { display: flex; align-items: center; gap: var(--sp-2); }
+.pp-head img { width: 20px; height: 20px; flex: none; }
+.pp-head h1 { flex: 1; font-size: var(--fs-title); font-weight: 600; }
+
+.pp-site {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--sp-2);
+  border-radius: var(--r-s);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.pp-status { display: flex; flex-direction: column; gap: 4px; }
+.pp-mode { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.pp-mode .mode-dot { width: 8px; height: 8px; }
+.mode-dot.mode-none { background: var(--gray); }
+.mode-dot.mode-blocked { background: var(--red); }
+
+.pp-stats { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; }
+.pp-score { font-size: var(--fs-large); font-weight: 600; line-height: 1.1; }
+.pp-sev { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.pp-sev .dot { width: 6px; height: 6px; border-radius: 50%; }
+.pp-sev.sev-critical .dot { background: var(--sev-critical); }
+.pp-sev.sev-high .dot { background: var(--sev-high); }
+.pp-sev.sev-medium .dot { background: var(--sev-medium); }
+.pp-sev.sev-low .dot { background: var(--sev-low); }
+
+.pp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.pp-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.pp-check input { margin: 0; }
+
+.pp-msg { display: flex; gap: 6px; font-size: var(--fs-caption); color: var(--text-2); }
+.pp-msg.tone-error { color: var(--red); }
+.pp-msg.tone-good { color: var(--green); }
+
+.pp-hint {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--hairline);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.pp-hint kbd {
+  font: 600 10px var(--mono);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--fill);
+  color: var(--text);
+}
+.pp-foot { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-caption); color: var(--text-3); }
+.pp-foot a { color: var(--text-2); }

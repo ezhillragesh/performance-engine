@@ -3,6 +3,9 @@
 //   ?theme=dark|light
 //   ?mode=app|injected|devtools   engine mode (default app). ?state=noengine is an alias for devtools.
 //   ?perm=deny                    chrome.permissions.request resolves false
+//   ?site=webstore                the inspected page is on the Chrome Web Store (engine can't be injected)
+//   ?site=blocked                 every inspectedWindow.eval fails, like on chrome:// pages
+//   ?guide=1                      show the first-run "Getting started" guide (hidden by default in the preview)
 // Console helpers: previewControls.navigate(), .disconnect(), .reset(), .setMode("app"|"injected"|"devtools")
 // Accessibility tab: every other inspectedWindow.eval expression runs inside an off-screen iframe
 // showing dev/a11y-fixture.html, so the real vendor/a11y-audit.js — and the real vendored
@@ -15,6 +18,15 @@
   var mode = params.get("mode") || (params.get("state") === "noengine" ? "devtools" : "app");
   if (mode !== "injected" && mode !== "devtools") mode = "app";
   var permDeny = params.get("perm") === "deny";
+  var site = params.get("site");
+  if (site === "webstore" || site === "blocked") mode = "devtools";
+  // The first-run guide would cover every preview screenshot: mark it seen unless ?guide=1.
+  try {
+    if (params.get("guide") === "1") localStorage.removeItem("mock-chrome.local.perfEngine.guideSeen");
+    else localStorage.setItem("mock-chrome.local.perfEngine.guideSeen", "true");
+  } catch (e) {
+    /* storage blocked */
+  }
 
   function makeEvent() {
     var ls = [];
@@ -123,10 +135,13 @@
             send(port, injectionStatus(msg.origin));
             setTimeout(function () { reloadAs("injected"); }, 400);
           } else if (msg.type === "DISABLE_INJECTION") {
-            mode = "devtools";
+            var wasInjected = mode === "injected";
+            if (msg.removePermission === true) granted = false;
+            if (wasInjected) mode = "devtools";
             send(port, injectionStatus(msg.origin));
-            setTimeout(function () { reloadAs("devtools"); }, 400);
+            if (wasInjected) setTimeout(function () { reloadAs("devtools"); }, 400);
           }
+          // INJECTION_INTENT: nothing to do here (the real background completes a later grant).
         }, 5);
       },
       disconnect: function () { port._open = false; },
@@ -193,13 +208,20 @@
     var cb = typeof callback === "function" ? callback : function () {};
     var expr = String(expression);
     setTimeout(function () {
+      if (site === "blocked") return cb(undefined, { isError: true, code: "E_FAILED", description: "Cannot access contents of the page. Extension manifest must request permission to access the respective host." });
       if (expr.indexOf("/*perf-intel:install*/") === 0) {
         cb({ installed: true, fresh: false, v: 1, timeOrigin: dt.read(0).timeOrigin });
       } else if (expr.indexOf("/*perf-intel:poll*/") === 0) {
         var m = /c\.read\((\d+)\)/.exec(expr);
-        cb(dt.read(m ? Number(m[1]) : 0));
+        var r = dt.read(m ? Number(m[1]) : 0);
+        if (site === "webstore" && r) {
+          r.origin = "https://chromewebstore.google.com";
+          r.href = r.origin + "/category/extensions";
+          r.title = "Chrome Web Store";
+        }
+        cb(r);
       } else if (expr === "location.origin") {
-        cb(dt.origin);
+        cb(site === "webstore" ? "https://chromewebstore.google.com" : dt.origin);
       } else {
         evalInFrame(expr, cb); // Accessibility audit, inspect(), highlight
       }
@@ -209,7 +231,7 @@
   var mock = {
     runtime: { id: "preview", lastError: undefined, connect: connect, getURL: function (p) { return "/" + p; } },
     devtools: {
-      inspectedWindow: { tabId: 1, eval: evalInPage },
+      inspectedWindow: { tabId: 1, eval: evalInPage, reload: function () { navigate(); } },
       panels: { themeName: theme === "dark" ? "dark" : theme === "light" ? "default" : undefined },
       network: {
         onNavigated: onNavigated,
@@ -223,6 +245,7 @@
         return new Promise(function (resolve) { setTimeout(function () { resolve(granted); }, 300); });
       },
       contains: function () { return Promise.resolve(granted); },
+      remove: function () { granted = false; return Promise.resolve(true); },
     },
     storage: { local: storageArea("local"), session: storageArea("session") },
   };

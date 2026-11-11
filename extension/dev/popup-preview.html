@@ -1,0 +1,27 @@
+<!doctype html>
+<!--
+  Dev preview of the toolbar popup (popup/popup.html) with mocked chrome.* APIs.
+  Serve the extension/ folder (cd extension && python -m http.server 8080), then open
+  http://localhost:8080/dev/popup-preview.html
+  Params: ?theme=dark|light  ?mode=app|injected|devtools|enabled|unreachable|webstore  ?perm=deny  ?snapshot=0
+  Not referenced by manifest.json.
+-->
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <title>Perf Intelligence popup — Preview</title>
+    <link rel="stylesheet" href="../devtools/panel.css" />
+    <link rel="stylesheet" href="../popup/popup.css" />
+    <style>
+      /* Frame the 340px popup like Chrome does. */
+      html, body { background: #888; }
+      body { width: auto; padding: 24px; }
+      .popup { width: 340px; background: var(--bg); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); }
+    </style>
+  </head>
+  <body>
+    <main id="popup" class="popup" aria-live="polite"></main>
+    <script src="./mock-popup.js"></script>
+    <script src="../popup/popup.js"></script>
+  </body>
+</html>

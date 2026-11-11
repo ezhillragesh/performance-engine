@@ -49,6 +49,8 @@
       { eventType: "click", target: "input#sync[type=checkbox]", label: "Toggle sync" },
       { eventType: "click", target: "a.nav-item", label: "Inbox" },
     ];
+    // v0.4 trackAction()/startAction() names for some triggers (TraceSummary.action).
+    var ACTIONS = { "button#search.primary": "search-messages", "input#sync[type=checkbox]": "toggle-sync" };
     var ENDPOINTS = ["/api/messages?q=perf", "/api/messages/star", "/api/search?q=re", "/api/sync", "/api/folders/inbox"];
 
     function makeTrace(start) {
@@ -143,6 +145,7 @@
         start: t, end: end, durationMs: round(end - t), latencyMs: inter.duration,
         renderCount: renderCount, networkCount: 1, longTaskMs: lt.duration,
         components: Object.keys(components), eventIds: ids, insightIds: [], spans: spans,
+        action: ACTIONS[trig.target],
         _heavy: heavy, _net: net, _lt: lt, _inter: inter, _list: list, _failed: failed,
       };
       traces.push(trace);
@@ -375,6 +378,21 @@
       };
     }
 
+    /** v0.4 engine Web Vitals with attribution: INP points at the slowest trace's interaction. */
+    function engineVitals() {
+      var worst = null;
+      traces.forEach(function (t) { if (!worst || t._inter.duration > worst._inter.duration) worst = t; });
+      var inp = worst ? worst._inter : null;
+      return {
+        lcp: 2860, lcpTarget: "img.hero-image", cls: 0.08, inp: inp ? inp.duration : null, fcp: 1240, ttfb: 420, interactions: traces.length,
+        attribution: {
+          lcp: { target: "img.hero-image", url: "cdn.example.com/img/hero.avif", startTime: 2860 },
+          cls: { target: "div.banner", startTime: 3100, value: 0.05 },
+          inp: inp ? { name: inp.name, target: inp.target, interactionId: inp.interactionId, startTime: inp.timestamp, inputDelay: inp.inputDelay, processingMs: inp.processingMs, presentationDelay: inp.presentationDelay, traceId: worst.traceId } : undefined,
+        },
+      };
+    }
+
     function publicTrace(t) {
       var out = {};
       Object.keys(t).forEach(function (k) { if (k.charAt(0) !== "_") out[k] = t[k]; });
@@ -387,7 +405,7 @@
       hello: function (mode) {
         return {
           source: "perf-engine", version: 2, type: "HELLO", timestamp: now(),
-          payload: { sessionId: sessionId, engineVersion: "0.3.0-preview", url: "http://localhost:5173/inbox?folder=primary", title: "Perf Demo — Inbox", timeOrigin: timeOrigin,
+          payload: { sessionId: sessionId, engineVersion: "0.4.0-preview", url: "http://localhost:5173/inbox?folder=primary", title: "Perf Demo — Inbox", timeOrigin: timeOrigin,
             config: { trackEvents: true, trackNetwork: true, trackRenders: true, trackLongTasks: true, trackInteractions: true, react: true, mode: mode === "injected" ? "injected" : "app" } },
         };
       },
@@ -396,8 +414,9 @@
         return {
           source: "perf-engine", version: 2, type: "SNAPSHOT", timestamp: now(),
           payload: {
-            sessionId: sessionId, engineVersion: "0.3.0-preview", capturedAt: capturedAt, timeOrigin: timeOrigin, paused: paused,
+            sessionId: sessionId, engineVersion: "0.4.0-preview", capturedAt: capturedAt, timeOrigin: timeOrigin, paused: paused,
             insights: ins, events: events.slice(), droppedEvents: dropped, traces: traces.map(publicTrace), summary: summary(ins), budgets: Object.assign({}, budgets),
+            vitals: engineVitals(),
           },
         };
       },

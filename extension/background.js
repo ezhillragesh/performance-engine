@@ -196,6 +196,7 @@ async function handlePageMessage(tabId, msg) {
       }
       state.hello = msg;
       if (isObj(msg.payload) && typeof msg.payload.url === "string") state.url = msg.payload.url.slice(0, 2000);
+      resolveHelloWaiters(tabId);
       broadcast(tabId, { type: "CONNECTION", engineDetected: true });
       broadcast(tabId, { type: "PERF_MESSAGE", payload: msg });
       if (hasPanel(tabId)) sendCommand(tabId, "ATTACH"); // resume streaming after reload
@@ -226,8 +227,11 @@ async function handlePageMessage(tabId, msg) {
   schedulePersist(tabId);
 }
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return;
+  // The toolbar popup (an extension page; content scripts report the web page's URL instead)
+  // asks for per-site status / injection.
+  if (isExtensionPage(sender)) return handlePopupMessage(message, sendResponse);
   if (!sender.tab || typeof sender.tab.id !== "number" || sender.frameId !== 0) return; // top frame only
   if (!isObj(message) || message.type !== "PERF_MESSAGE") return;
   const payload = message.payload;
@@ -278,6 +282,11 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     if (tabId === null) return;
+
+    if (message.type === "INJECTION_INTENT") {
+      recordIntent(tabId, message.origin);
+      return;
+    }
 
     if (INJECTION_TYPES.has(message.type)) {
       handleInjectionMessage(port, tabId, message);
@@ -397,9 +406,11 @@ async function injectionStatus(origin) {
   return { origin, enabled, granted };
 }
 
+/** Resolves to true when the script was newly registered (the tab then needs a reload). */
 async function enableInjection(origin) {
   if (!(await hasHostPermission(origin))) return false; // panel must request it first (user gesture)
   const id = injectScriptId(origin);
+  const wasRegistered = await isRegistered(id);
   const script = {
     id,
     matches: [originPattern(origin)],
@@ -409,14 +420,15 @@ async function enableInjection(origin) {
     allFrames: false,
     persistAcrossSessions: true,
   };
-  if (await isRegistered(id)) await chrome.scripting.updateContentScripts([script]);
+  if (wasRegistered) await chrome.scripting.updateContentScripts([script]);
   else await chrome.scripting.registerContentScripts([script]);
   const map = await loadInjectMap();
   map[id] = origin;
   await saveInjectMap(map);
-  return true;
+  return !wasRegistered;
 }
 
+/** Unregisters the given script ids; resolves to the number that were registered. */
 async function unregisterInjection(ids) {
   const registered = [];
   for (const id of ids) if (await isRegistered(id)) registered.push(id);
@@ -436,10 +448,12 @@ async function unregisterInjection(ids) {
     }
   }
   if (changed) await saveInjectMap(map);
+  return registered.length;
 }
 
+/** Resolves to true when an injected script was registered (the tab then needs a reload). */
 async function disableInjection(origin, removePermission) {
-  await unregisterInjection([injectScriptId(origin)]);
+  const wasRegistered = (await unregisterInjection([injectScriptId(origin)])) > 0;
   if (removePermission) {
     try {
       await chrome.permissions.remove({ origins: [originPattern(origin)] });
@@ -447,6 +461,7 @@ async function disableInjection(origin, removePermission) {
       /* e.g. permission was granted as a required one */
     }
   }
+  return wasRegistered;
 }
 
 function reloadTab(tabId) {
@@ -457,40 +472,208 @@ function reloadTab(tabId) {
   }
 }
 
-function handleInjectionMessage(port, tabId, message) {
-  const reply = (m) => {
-    try {
-      port.postMessage(m);
-    } catch {
-      /* port closed */
-    }
-  };
+// Chrome never runs extension scripts on the Web Store, whatever the host permissions say.
+const RESTRICTED_HOSTS = new Set(["chromewebstore.google.com", "chrome.google.com"]);
+
+function isRestrictedOrigin(origin) {
+  try {
+    return RESTRICTED_HOSTS.has(new URL(origin).hostname);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Applies one injection message and resolves to its INJECTION_STATUS reply. Shared by the
+ * DevTools panel (port) and the toolbar popup (runtime message). `tabId` is reloaded after a
+ * change that affects the page; it may be null (nothing to reload).
+ */
+function runInjectionMessage(tabId, message) {
   const origin = normalizeOrigin(message.origin);
-  if (!origin) {
-    reply({
+  if (!origin || (message.type === "ENABLE_INJECTION" && isRestrictedOrigin(origin))) {
+    return Promise.resolve({
       type: "INJECTION_STATUS",
       origin: typeof message.origin === "string" ? message.origin.slice(0, 300) : "",
       enabled: false,
       granted: false,
-      error: "invalid-origin",
+      error: origin ? "restricted-origin" : "invalid-origin",
     });
-    return;
   }
-  void queueInjection(async () => {
+  return queueInjection(async () => {
     let error;
     try {
       if (message.type === "ENABLE_INJECTION") {
-        if (await enableInjection(origin)) reloadTab(tabId);
+        await takeIntent(origin);
+        if ((await enableInjection(origin)) && tabId !== null) reloadTab(tabId);
       } else if (message.type === "DISABLE_INJECTION") {
-        await disableInjection(origin, message.removePermission === true);
-        reloadTab(tabId);
+        if ((await disableInjection(origin, message.removePermission === true)) && tabId !== null) reloadTab(tabId);
       }
     } catch (err) {
       error = String((err && err.message) || err).slice(0, 300);
       console.warn("[perf-devtools] injection change failed", err);
     }
     const status = await injectionStatus(origin);
-    reply(error ? { type: "INJECTION_STATUS", ...status, error } : { type: "INJECTION_STATUS", ...status });
+    return error ? { type: "INJECTION_STATUS", ...status, error } : { type: "INJECTION_STATUS", ...status };
+  });
+}
+
+function handleInjectionMessage(port, tabId, message) {
+  void runInjectionMessage(tabId, message).then((reply) => {
+    try {
+      port.postMessage(reply);
+    } catch {
+      /* port closed */
+    }
+  });
+}
+
+// ── Toolbar popup (docs/PROTOCOL.md "Toolbar popup") ────────────────────
+
+const POPUP_TYPES = new Set(["POPUP_STATUS_REQUEST", "INJECTION_INTENT", ...INJECTION_TYPES]);
+const HELLO_WAIT_MS = 600;
+const HELLO_WAITERS = new Map(); // tabId -> Set<() => void>
+
+function isExtensionPage(sender) {
+  return typeof sender.url === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
+}
+
+function resolveHelloWaiters(tabId) {
+  const set = HELLO_WAITERS.get(tabId);
+  if (!set) return;
+  HELLO_WAITERS.delete(tabId);
+  for (const fn of set) fn();
+}
+
+/** PINGs the tab and resolves once a HELLO arrived or after `ms`. */
+function waitForHello(tabId, ms) {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      HELLO_WAITERS.get(tabId)?.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    if (!HELLO_WAITERS.has(tabId)) HELLO_WAITERS.set(tabId, new Set());
+    HELLO_WAITERS.get(tabId).add(done);
+    sendCommand(tabId, "PING");
+  });
+}
+
+function popupEngine(state) {
+  const p = state.hello && isObj(state.hello.payload) ? state.hello.payload : null;
+  if (!p) return null;
+  const cfg = isObj(p.config) ? p.config : {};
+  return {
+    mode: cfg.mode === "injected" ? "injected" : "app",
+    engineVersion: typeof p.engineVersion === "string" ? p.engineVersion.slice(0, 40) : "?",
+    react: cfg.react === true,
+    sessionId: typeof p.sessionId === "string" ? p.sessionId.slice(0, 120) : "",
+  };
+}
+
+function popupSnapshot(state, engine) {
+  const snap = state.snapshot && isObj(state.snapshot.payload) ? state.snapshot.payload : null;
+  if (!snap || !engine || snap.sessionId !== engine.sessionId) return null;
+  const sum = isObj(snap.summary) ? snap.summary : {};
+  const counts = isObj(sum.insightCounts) ? sum.insightCounts : {};
+  const n = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+  return {
+    score: typeof sum.score === "number" && Number.isFinite(sum.score) ? Math.round(sum.score) : null,
+    grade: typeof sum.grade === "string" ? sum.grade.slice(0, 30) : null,
+    insights: Array.isArray(snap.insights) ? snap.insights.length : 0,
+    insightCounts: { critical: n(counts.critical), high: n(counts.high), medium: n(counts.medium), low: n(counts.low) },
+  };
+}
+
+async function popupStatus(message) {
+  const tabId = message.tabId;
+  let state = await getTab(tabId);
+  if (!state.hello) {
+    await waitForHello(tabId, HELLO_WAIT_MS);
+    state = await getTab(tabId);
+  }
+  const engine = popupEngine(state);
+  const origin = normalizeOrigin(message.origin);
+  return {
+    type: "POPUP_STATUS",
+    tabId,
+    engine,
+    snapshot: popupSnapshot(state, engine),
+    panelOpen: hasPanel(tabId),
+    injection: origin ? await injectionStatus(origin) : null,
+    restricted: origin ? isRestrictedOrigin(origin) : false,
+  };
+}
+
+function handlePopupMessage(message, sendResponse) {
+  if (!isObj(message) || !POPUP_TYPES.has(message.type) || !Number.isInteger(message.tabId)) return;
+  if (message.type === "INJECTION_INTENT") {
+    recordIntent(message.tabId, message.origin);
+    sendResponse({ type: "OK" });
+    return;
+  }
+  const work = message.type === "POPUP_STATUS_REQUEST" ? popupStatus(message) : runInjectionMessage(message.tabId, message);
+  work.then(sendResponse, (err) => sendResponse({ type: "ERROR", error: String((err && err.message) || err).slice(0, 300) }));
+  return true; // async sendResponse
+}
+
+// "Enable on this site" intents. The panel / popup records one right before it calls
+// chrome.permissions.request. If the grant arrives while nobody is left to send ENABLE_INJECTION
+// (the popup closed with Chrome's prompt, or the user granted the site from the Extensions menu
+// after the DevTools prompt failed), chrome.permissions.onAdded completes it. Persisted in
+// storage.session: the service worker may stop while the prompt is open.
+const INTENT_KEY = "inject-intents"; // { [origin]: { tabId, at } }
+const INTENT_TTL_MS = 5 * 60 * 1000;
+
+async function loadIntents() {
+  try {
+    const got = await chrome.storage.session.get(INTENT_KEY);
+    const all = isObj(got && got[INTENT_KEY]) ? got[INTENT_KEY] : {};
+    const now = Date.now();
+    for (const k of Object.keys(all)) if (!isObj(all[k]) || now - (all[k].at || 0) > INTENT_TTL_MS) delete all[k];
+    return all;
+  } catch {
+    return {};
+  }
+}
+
+function saveIntents(all) {
+  return chrome.storage.session.set({ [INTENT_KEY]: all }).catch(() => {});
+}
+
+function recordIntent(tabId, rawOrigin) {
+  const origin = normalizeOrigin(rawOrigin);
+  if (!origin || !Number.isInteger(tabId) || isRestrictedOrigin(origin)) return;
+  void queueInjection(async () => {
+    const all = await loadIntents();
+    all[origin] = { tabId, at: Date.now() };
+    await saveIntents(all);
+  });
+}
+
+/** Removes and returns the pending intent for `origin` (call inside queueInjection). */
+async function takeIntent(origin) {
+  const all = await loadIntents();
+  const intent = all[origin] || null;
+  if (intent) {
+    delete all[origin];
+    await saveIntents(all);
+  }
+  return intent;
+}
+
+if (chrome.permissions && chrome.permissions.onAdded) {
+  chrome.permissions.onAdded.addListener((added) => {
+    const origins = added && Array.isArray(added.origins) ? added.origins : [];
+    if (origins.length === 0) return;
+    void queueInjection(async () => {
+      const all = await loadIntents();
+      const todo = [];
+      for (const origin of Object.keys(all)) if (await hasHostPermission(origin)) todo.push([origin, all[origin].tabId]);
+      return todo;
+    }).then((todo) => {
+      for (const [origin, tabId] of todo || []) void runInjectionMessage(tabId, { type: "ENABLE_INJECTION", origin });
+    });
   });
 }
 
@@ -513,6 +696,15 @@ if (chrome.permissions && chrome.permissions.onRemoved) {
 
 // ── Tab lifecycle ────────────────────────────────────────────────────
 
+function pageUrl(raw) {
+  try {
+    const u = new URL(raw);
+    return (u.protocol === "http:" || u.protocol === "https:" ? `${u.origin}${u.pathname}` : `${u.protocol}`).slice(0, 2000);
+  } catch {
+    return null;
+  }
+}
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   PORTS.delete(tabId);
   QUEUES.delete(tabId);
@@ -524,9 +716,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== "loading") return;
   enqueue(tabId, async () => {
     const state = await getTab(tabId);
-    const url = typeof changeInfo.url === "string" ? changeInfo.url : null;
+    const raw = typeof changeInfo.url === "string" ? changeInfo.url : null;
     // Without the "tabs" permission the URL may be unavailable; treat unknown as a navigation.
-    if (url !== null && state.url !== null && url === state.url) return;
+    if (raw !== null && state.url !== null && raw === state.url) return;
+    // Stored and sent as origin + path only, like HELLO.url: queries and hashes may carry PII.
+    const url = raw === null ? null : pageUrl(raw);
     const hadData = !!(state.hello || state.snapshot);
     clearTab(tabId);
     TABS.set(tabId, { ...emptyState(), url });

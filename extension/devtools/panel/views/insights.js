@@ -1,4 +1,5 @@
-import { h, icon, replaceChildren, reconcile, setText, ellipsis, emptyState, segmented, searchField, listKeyNav } from "../dom.js";
+import { h, icon, replaceChildren, reconcile, setText, ellipsis, emptyState, segmented, searchField, listKeyNav, copyButton } from "../dom.js";
+import { insightMarkdown } from "../report.js";
 import {
   humanizeIssueType,
   humanizeCategory,
@@ -204,6 +205,7 @@ export function createInsightsView(ctx) {
           i.traceId && snap?.tracesById.has(i.traceId)
             ? h("button", { type: "button", class: "btn", onClick: () => ctx.actions.openTrace(i.traceId) }, icon("waterfall", 14), h("span", { text: "Open trace" }))
             : null,
+          copyButton({ label: "Copy as Markdown", title: "Copy an issue-ready Markdown report of this insight", getText: () => insightMarkdown(entry, ctx.actions.reportContext()) }),
         ),
         h(
           "div",

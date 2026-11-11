@@ -1,6 +1,6 @@
-import { h, replaceChildren, reconcile, ellipsis, emptyState, sortHeader, searchField, listKeyNav } from "../dom.js";
+import { h, icon, replaceChildren, reconcile, ellipsis, emptyState, sortHeader, searchField, listKeyNav } from "../dom.js";
 import { formatMs, formatPct, safeMax } from "../format.js";
-import { mergeComponentStats } from "../derive.js";
+import { mergeComponentStats, renderTimingMissing } from "../derive.js";
 
 const COLUMNS = [
   { key: "name", label: "Component", defaultDir: "asc" },
@@ -22,7 +22,13 @@ export function createComponentsView(ctx) {
   const table = h("table", { class: "data-table", "aria-label": "Components" });
   const tbody = h("tbody");
   const tableWrap = h("div", { class: "pane pane-table full" }, table);
-  const content = h("div", { class: "view-body" }, h("div", { class: "filterbar" }, search.el, count, h("span", { class: "spacer" }), h("span", { class: "caption muted", text: "Click a component to filter insights" })), tableWrap);
+  const prodNote = h(
+    "p",
+    { class: "inline-note", role: "note", hidden: true },
+    icon("info", 12),
+    h("span", { text: "Production React build: render counts and wasted renders are exact, but React doesn't measure render time here (shown as 0 ms) and component names are usually minified. Use a development or profiling build for render cost and real names." }),
+  );
+  const content = h("div", { class: "view-body" }, h("div", { class: "filterbar" }, search.el, count, h("span", { class: "spacer" }), h("span", { class: "caption muted hide-narrow", text: "Click a component to filter insights" })), prodNote, tableWrap);
   const el = h("section", { class: "view view-components", "aria-label": "Components" });
 
   listKeyNav(tbody, { itemSelector: "tr", onActivate: (tr) => ctx.actions.filterInsightsBy(tr.dataset.id) });
@@ -46,6 +52,7 @@ export function createComponentsView(ctx) {
       return replaceChildren(el, emptyState({ iconName: "cube", title: "No component renders recorded", body: "Render tracking needs the React integration or manual trackRender() instrumentation." }));
     }
     if (!el.contains(content)) replaceChildren(el, content);
+    prodNote.hidden = !renderTimingMissing(snap.events);
     const u = ui();
     search.set(u.search);
     const q = u.search.trim().toLowerCase();

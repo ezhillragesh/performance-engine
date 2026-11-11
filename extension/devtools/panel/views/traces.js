@@ -111,7 +111,7 @@ export function createTracesView(ctx) {
           "header",
           { class: "detail-head" },
           h("h2", { class: "detail-title" }, h("span", { class: "chip", text: trace.trigger.eventType }), " ", ellipsis(trace.trigger.label || trace.trigger.target)),
-          h("p", { class: "caption num", text: `${formatWallTime(snap.timeOrigin, trace.start)} · ${formatMs(trace.durationMs)} total${isNum(trace.latencyMs) ? ` · ${formatMs(trace.latencyMs)} latency` : ""}` }),
+          h("p", { class: "caption num", text: `${formatWallTime(snap.timeOrigin, trace.start)} · ${formatMs(trace.durationMs)} total${isNum(trace.latencyMs) ? ` · ${formatMs(trace.latencyMs)} latency` : ""}${trace.action && trace.action !== trace.trigger.target ? ` · action ${trace.action}` : ""}` }),
         ),
         h(
           "div",
@@ -162,7 +162,8 @@ function updateRow(tr, t, snap, selectedId) {
   const insights = snap.insightsByTrace.get(t.traceId) || [];
   const worst = insights.slice().sort((a, b) => severityRank(a.severity) - severityRank(b.severity))[0];
   const cells = tr.children;
-  const label = t.trigger.label || t.trigger.target;
+  // An action named with startAction()/trackAction() describes the trace better than its DOM target.
+  const label = t.action && t.trigger.eventType !== "action" ? `${t.action} · ${t.trigger.label || t.trigger.target}` : t.trigger.label || t.trigger.target;
   // Flex row so a long label truncates itself instead of being pushed out of the cell by the chip.
   replaceChildren(
     cells[0],

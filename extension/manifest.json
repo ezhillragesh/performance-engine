@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Perf Intelligence DevTools",
-  "version": "0.3.0",
-  "description": "DevTools panel for the frontend performance intelligence engine: causal traces, insights, budgets.",
+  "short_name": "Perf Intelligence",
+  "version": "0.4.0",
+  "description": "Explains slow clicks: causal traces from interaction to requests and React renders, insights, Web Vitals, a11y audit.",
+  "homepage_url": "https://github.com/ezhillragesh/performance-engine",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "scripting"],
   "optional_host_permissions": ["<all_urls>"],
@@ -11,6 +13,14 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Perf Intelligence: site status and access",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   },
   "background": {
     "service_worker": "background.js"

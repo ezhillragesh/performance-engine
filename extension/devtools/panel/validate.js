@@ -108,6 +108,7 @@ export function validateEvent(raw) {
         label: str(raw.label),
         domTimestamp: num(raw.domTimestamp),
         startsTrace: bool(raw.startsTrace),
+        editable: bool(raw.editable),
       };
     case "render":
       return {
@@ -306,6 +307,7 @@ export function validateTrace(raw) {
     end,
     durationMs: nonNeg(raw.durationMs) ?? end - start,
     latencyMs: nonNeg(raw.latencyMs),
+    action: str(raw.action, 80), // v0.4: startAction() / trackAction() name
     renderCount: nonNeg(raw.renderCount) ?? 0,
     networkCount: nonNeg(raw.networkCount) ?? 0,
     longTaskMs: nonNeg(raw.longTaskMs) ?? 0,
@@ -422,6 +424,7 @@ export function validateHello(raw) {
   for (const k of ["trackEvents", "trackNetwork", "trackRenders", "trackLongTasks", "trackInteractions", "react"]) {
     config[k] = cfg[k] === true;
   }
+  if (typeof cfg.trackWebVitals === "boolean") config.trackWebVitals = cfg.trackWebVitals; // v0.4+
   // v2.1: which engine copy is talking ("app" bundled by the page, "injected" by the extension).
   config.mode = cfg.mode === "injected" ? "injected" : "app";
   return {
@@ -450,7 +453,38 @@ export function validateSnapshot(raw) {
     traces: validateTraces(raw.traces),
     summary: validateSummary(raw.summary),
     budgets: validateBudgets(raw.budgets),
+    vitals: raw.vitals == null ? null : validateEngineVitals(raw.vitals), // v0.4+
   };
+}
+
+/**
+ * Engine-measured Web Vitals (PerfSnapshot.vitals, core/types/vitals.ts): the collector's flat
+ * fields plus `attribution` (LCP element, worst CLS shift, slowest INP interaction + its trace).
+ */
+export function validateEngineVitals(raw) {
+  const flat = validateVitals(raw);
+  if (!flat) return null;
+  const a = isObj(raw.attribution) ? raw.attribution : {};
+  const attribution = {};
+  if (isObj(a.lcp) && str(a.lcp.target)) {
+    attribution.lcp = { target: str(a.lcp.target, 200), url: str(a.lcp.url, 300), startTime: nonNeg(a.lcp.startTime) ?? 0 };
+  }
+  if (isObj(a.cls)) {
+    attribution.cls = { target: str(a.cls.target, 200), startTime: nonNeg(a.cls.startTime) ?? 0, value: nonNeg(a.cls.value) ?? 0 };
+  }
+  if (isObj(a.inp) && str(a.inp.target)) {
+    attribution.inp = {
+      name: strOr(a.inp.name, "interaction").slice(0, 40),
+      target: str(a.inp.target, 200),
+      interactionId: nonNeg(a.inp.interactionId) ?? 0,
+      startTime: nonNeg(a.inp.startTime) ?? 0,
+      inputDelay: nonNeg(a.inp.inputDelay) ?? 0,
+      processingMs: nonNeg(a.inp.processingMs) ?? 0,
+      presentationDelay: nonNeg(a.inp.presentationDelay) ?? 0,
+      traceId: str(a.inp.traceId, 120),
+    };
+  }
+  return { ...flat, lcpTarget: flat.lcpTarget ?? null, attribution };
 }
 
 const PAGE_TYPES = new Set(["HELLO", "SNAPSHOT", "RESET", "INSIGHTS_UPDATE", "EVENTS_UPDATE"]);
@@ -512,7 +546,7 @@ export function validateBundle(raw) {
     hello: validateHello(raw.hello),
     snapshot,
     insightHistory: list(raw.insightHistory, validateHistoryEntry, LIMITS.insights * 2).items,
-    vitals: validateVitals(raw.vitals),
+    vitals: raw.vitals == null ? null : validateEngineVitals(raw.vitals),
     mode: raw.mode === "devtools" || raw.mode === "injected" || raw.mode === "app" ? raw.mode : null,
     a11y: raw.a11y == null ? null : validateReport(raw.a11y),
   };

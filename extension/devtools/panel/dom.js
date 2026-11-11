@@ -102,6 +102,9 @@ const ICONS = {
   hand: [["path", { d: "M5.5 8V4a1 1 0 0 1 2 0v3.5M7.5 7V3a1 1 0 0 1 2 0v4M9.5 7V4a1 1 0 0 1 2 0v5c0 2.5-1.5 4.5-4 4.5-1.8 0-2.7-.8-3.8-2.3L2.5 9a1 1 0 0 1 1.6-1.1L5.5 9.5" }]],
   plug: [["path", { d: "M6 2.5V5M10 2.5V5M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v2.5" }]],
   refresh: [["path", { d: "M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.5h-2.5" }]],
+  help: [["circle", { cx: 8, cy: 8, r: 5.5 }], ["path", { d: "M6.4 6.4a1.7 1.7 0 0 1 3.3.5c0 1.1-1.7 1.4-1.7 2.4M8 11.3h.01" }]],
+  copy: [["rect", { x: 5.5, y: 5.5, width: 7.5, height: 8, rx: 1.5 }], ["path", { d: "M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4.5A1.5 1.5 0 0 0 3 4v6a1.5 1.5 0 0 0 1.5 1.5h1" }]],
+  lock: [["rect", { x: 3.5, y: 7, width: 9, height: 6.5, rx: 1.5 }], ["path", { d: "M5.5 7V5a2.5 2.5 0 0 1 5 0v2" }]],
 };
 
 export function icon(name, size = 16, className = "") {
@@ -331,6 +334,61 @@ export function listKeyNav(container, { itemSelector, onMove, onActivate }) {
     el.scrollIntoView({ block: "nearest" });
     onMove?.(el);
   });
+}
+
+/**
+ * Copies text to the clipboard. The Clipboard API is often blocked inside DevTools panels, so a
+ * selection copy runs first (synchronously, inside the user gesture), the async API second.
+ * Resolves to true on success.
+ */
+export function copyText(text) {
+  let ok = false;
+  const ta = h("textarea", { "aria-hidden": "true", tabIndex: -1, readonly: true, style: { position: "fixed", top: "-1000px", left: "0", opacity: "0" } });
+  ta.value = String(text);
+  const prevFocus = document.activeElement;
+  document.body.appendChild(ta);
+  try {
+    ta.select();
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  if (prevFocus instanceof HTMLElement) prevFocus.focus({ preventScroll: true });
+  if (ok) return Promise.resolve(true);
+  try {
+    return navigator.clipboard.writeText(String(text)).then(
+      () => true,
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+/** Button that copies `getText()` and briefly confirms ("Copied" / "Copy failed"). */
+export function copyButton({ label = "Copy", title, getText, className = "btn" }) {
+  const text = h("span", { text: label });
+  const btn = h("button", { type: "button", class: className, title: title || label }, icon("copy", 14), text);
+  let timer = 0;
+  btn.addEventListener("click", () => {
+    let value = "";
+    try {
+      value = getText();
+    } catch {
+      value = "";
+    }
+    copyText(value).then((ok) => {
+      text.textContent = ok ? "Copied" : "Copy failed";
+      btn.classList.toggle("is-copied", ok);
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        text.textContent = label;
+        btn.classList.remove("is-copied");
+      }, 1600);
+    });
+  });
+  return btn;
 }
 
 export function downloadJson(filename, data) {

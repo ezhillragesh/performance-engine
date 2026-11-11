@@ -48,8 +48,19 @@
     }
   }
 
-  function onRuntimeMessage(message) {
-    if (!message || message.type !== "PANEL_COMMAND" || typeof message.command !== "string") return;
+  function onRuntimeMessage(message, sender, sendResponse) {
+    if (!message) return;
+    // Toolbar popup: which site is this tab on? (Without the "tabs" permission the extension can't
+    // read tab URLs.) Origin and title only: never the path or query.
+    if (message.type === "PAGE_INFO") {
+      try {
+        sendResponse({ type: "PAGE_INFO", origin: String(location.origin), title: String(document.title || "").slice(0, 200) });
+      } catch (e) {
+        /* popup closed */
+      }
+      return;
+    }
+    if (message.type !== "PANEL_COMMAND" || typeof message.command !== "string") return;
     window.postMessage(
       { source: PANEL_SOURCE, version: 2, type: "COMMAND", command: message.command, payload: message.payload },
       "*",

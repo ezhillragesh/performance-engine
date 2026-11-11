@@ -13,13 +13,17 @@ import { createComponentsView } from "./views/components.js";
 import { createNetworkView } from "./views/network.js";
 import { createAccessibilityView } from "./views/accessibility.js";
 import { createBudgetsPopover, loadStoredBudgets } from "./views/budgets.js";
-import { createSiteAccess, isEnableableOrigin, MODE_META } from "./views/siteAccess.js";
+import { createSiteAccess, isEnableableOrigin, originRestriction, loadGuideSeen, MODE_META } from "./views/siteAccess.js";
 import { createDevtoolsLayer } from "./devtoolsLayer/index.js";
 
 const NO_ENGINE_TIMEOUT_MS = 2500;
 const RECORDING_FRESH_MS = 3000;
 const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
 const INJECTION_REPLY_TIMEOUT_MS = 10000;
+const INJECTION_ERRORS = {
+  "invalid-origin": "This page's address can't be used for site access (http(s) pages only).",
+  "restricted-origin": "Chrome doesn't let extensions run on this site.",
+};
 
 // View registry: one row per tab. Tabs, panels, keyboard shortcuts (1–9) and dirty tracking are
 // all derived from this list, so adding a view is one import + one row here.
@@ -79,6 +83,7 @@ function boot() {
       recomputeStatus();
     },
     onVitals: (v) => store.setVitals(v),
+    onCollectorStatus: (st) => store.setCollectorStatus(st),
     onPage: (info) => {
       store.setPage(info);
       if (info.origin) setOrigin(info.origin);
@@ -141,6 +146,7 @@ function boot() {
     viewInstances.accessibility.onNavigated(); // coalesced with its own onNavigated listener
     store.setDevtoolsFallback(false);
     store.resetPassive();
+    store.resetCollectorStatus();
     store.setVitals(null);
     waitForEngine("navigated");
     // The old document may still answer right away; ask again once the new one exists.
@@ -157,7 +163,9 @@ function boot() {
   }
 
   function refreshOrigin() {
-    layer.fetchOrigin().then((o) => o && setOrigin(o));
+    // Same origin after a reload: still re-read the injection status (it may have been changed
+    // from the toolbar popup or another DevTools window meanwhile).
+    layer.fetchOrigin().then((o) => (o && o !== store.state.injection.origin ? setOrigin(o) : requestInjectionStatus()));
   }
 
   function requestInjectionStatus() {
@@ -173,10 +181,15 @@ function boot() {
     clearTimeout(injectionTimer);
     const enabled = p.enabled === true;
     let message = inj.message;
-    if (typeof p.error === "string" && p.error) message = { tone: "error", text: p.error.slice(0, 300) };
+    const granted = p.granted === true;
+    if (typeof p.error === "string" && p.error) message = { tone: "error", text: INJECTION_ERRORS[p.error] || p.error.slice(0, 300) };
     else if (inj.pending === "enable") message = enabled ? { tone: "good", text: "Enabled — the page reloads with the injected engine." } : { tone: "error", text: "The extension couldn't enable injection on this site." };
-    else if (inj.pending === "disable") message = enabled ? { tone: "error", text: "The extension couldn't disable injection on this site." } : { tone: "good", text: "Disabled — the page reloads without the engine." };
-    store.setInjection({ enabled, granted: p.granted === true, known: true, pending: null, message });
+    else if (inj.pending === "disable") {
+      if (enabled) message = { tone: "error", text: "The extension couldn't disable injection on this site." };
+      else if (inj.enabled) message = { tone: "good", text: granted ? "Disabled — the page reloads without the engine." : "Disabled and site access removed — the page reloads without the engine." };
+      else message = { tone: "good", text: granted ? "Injection is off for this site." : "Site access removed." };
+    }
+    store.setInjection({ enabled, granted, known: true, pending: null, message });
   }
 
   function awaitInjectionReply(what) {
@@ -192,7 +205,7 @@ function boot() {
       pending: null,
       message: {
         tone: "error",
-        text: `Chrome didn't show the site-access prompt from DevTools${detail ? ` (${String(detail).slice(0, 120)})` : ""}. Grant this site from the Extensions menu in the toolbar, then click Enable again.`,
+        text: `Chrome didn't show the site-access prompt from DevTools${detail ? ` (${String(detail).slice(0, 120)})` : ""}. Click the Perf Intelligence button in Chrome's toolbar (Extensions menu) and choose Enable on this site; this panel follows automatically.`,
       },
     });
   }
@@ -212,6 +225,7 @@ function boot() {
     switch (m.type) {
       case "HELLO": {
         store.setHello(m.payload);
+        requestInjectionStatus();
         const note = store.state.injection.message;
         if (note && note.tone !== "error") store.setInjection({ message: null });
         // Budgets are page state: re-apply the user's saved budgets on every (re)attach.
@@ -275,10 +289,13 @@ function boot() {
      */
     enableInjection() {
       const origin = store.state.injection.origin;
-      if (!isEnableableOrigin(origin)) {
-        store.setInjection({ message: { tone: "error", text: "Only http(s) pages can run the injected engine." } });
+      if (!isEnableableOrigin(origin) || originRestriction(origin)) {
+        store.setInjection({ message: { tone: "error", text: originRestriction(origin) || "Only http(s) pages can run the injected engine." } });
         return;
       }
+      // Recorded before the prompt: a grant that arrives another way (toolbar popup, Extensions
+      // menu) still enables injection for this tab (background: chrome.permissions.onAdded).
+      conn.injection("INJECTION_INTENT", origin);
       const perms = globalThis.chrome?.permissions;
       if (!perms || typeof perms.request !== "function") return permissionBlocked("permissions API unavailable here");
       let request;
@@ -305,16 +322,39 @@ function boot() {
         (err) => permissionBlocked(err?.message || err),
       );
     },
-    disableInjection() {
+    /** Unregisters the injected script (reloads the page if it was registered); optionally revokes site access. */
+    disableInjection({ removePermission = false } = {}) {
       const origin = store.state.injection.origin;
       if (!isEnableableOrigin(origin)) return;
-      if (!conn.injection("DISABLE_INJECTION", origin)) {
+      if (!conn.injection("DISABLE_INJECTION", origin, { removePermission: removePermission === true })) {
         store.setInjection({ message: { tone: "error", text: "The extension background is disconnected. Try again in a moment." } });
         return;
       }
-      store.setInjection({ pending: "disable", message: { tone: "info", text: "Disabling injection and reloading the page…" } });
+      const wasEnabled = store.state.injection.enabled;
+      store.setInjection({ pending: "disable", message: { tone: "info", text: wasEnabled ? "Disabling injection and reloading the page…" : "Removing site access…" } });
       awaitInjectionReply("disable");
     },
+    /** Reloads the inspected page (e.g. to start an engine that was enabled after the page loaded). */
+    reloadPage() {
+      try {
+        chrome.devtools.inspectedWindow.reload({});
+      } catch {
+        store.setInjection({ message: { tone: "error", text: "Couldn't reload the page from DevTools. Reload it in the browser." } });
+      }
+    },
+    /** Page + engine context for Markdown reports (origin + path only, see report.js). */
+    reportContext() {
+      const data = store.data;
+      const hello = data.hello;
+      return {
+        url: hello?.url || (store.readOnly ? "" : store.state.page?.href) || "",
+        title: hello?.title || (store.readOnly ? data.fileName : store.state.page?.title) || "",
+        mode: store.dataMode,
+        engineVersion: hello?.engineVersion || data.snapshot?.engineVersion || "",
+        react: hello?.config?.react === true,
+      };
+    },
+    openGuide: () => siteAccess.openGuide(),
     openInstall: () => siteAccess.openInstall(),
     openSiteSettings: (anchor) => siteAccess.openSettings(anchor),
     goToInsight(id) {
@@ -416,6 +456,7 @@ function boot() {
   const fileInput = h("input", { type: "file", accept: "application/json,.json", hidden: true, onChange: (e) => importFile(e.target.files?.[0]) });
   const importBtn = h("button", { type: "button", class: "icon-btn", title: "Import JSON bundle", "aria-label": "Import", onClick: () => fileInput.click() }, icon("import"));
   const budgetsBtn = h("button", { type: "button", class: "icon-btn", title: "Performance budgets", "aria-label": "Budgets", "aria-haspopup": "dialog", "aria-expanded": "false", onClick: (e) => budgets.open(e.currentTarget) }, icon("gauge"));
+  const helpBtn = h("button", { type: "button", class: "icon-btn", title: "Getting started: modes, site access, shortcuts (?)", "aria-label": "Getting started", "aria-haspopup": "dialog", onClick: () => siteAccess.openGuide() }, icon("help"));
 
   const header = h(
     "header",
@@ -428,7 +469,7 @@ function boot() {
       h("div", { class: "page" }, pageTitle, pageMeta),
     ),
     tablist,
-    h("div", { class: "tb-right" }, recordBtn, h("span", { class: "tb-sep", "aria-hidden": "true" }), clearBtn, exportBtn, importBtn, budgetsBtn, fileInput),
+    h("div", { class: "tb-right" }, recordBtn, h("span", { class: "tb-sep", "aria-hidden": "true" }), clearBtn, exportBtn, importBtn, budgetsBtn, helpBtn, fileInput),
   );
   const banner = h("div", { class: "banner-host" });
   const viewInstances = Object.fromEntries(VIEWS.map((v) => [v.id, v.create(ctx)]));
@@ -551,6 +592,7 @@ function boot() {
     }
     renderChrome();
     if (topic === "status") siteAccess.renderSettings();
+    if (topic === "status" || topic === "data") siteAccess.refreshGuide();
     if (topic === "view") {
       renderActive(dirty.has(store.state.view) ? "data" : "view");
       budgets.close();
@@ -646,6 +688,9 @@ function boot() {
     if (e.key === "/") {
       e.preventDefault();
       active.focusSearch?.();
+    } else if (e.key === "?") {
+      e.preventDefault();
+      siteAccess.openGuide();
     } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= VIEWS.length) {
       e.preventDefault();
       store.setView(VIEWS[Number(e.key) - 1].id);
@@ -676,6 +721,10 @@ function boot() {
   refreshOrigin();
   if (!contextValid()) store.setStatus("invalidated");
   else conn.connect();
+  // First run: explain the three modes once (re-open with "?" or the toolbar help button).
+  loadGuideSeen().then((seen) => {
+    if (!seen && !siteAccess.isOpen && !store.state.imported) siteAccess.openGuide();
+  });
 }
 
 function statusEmpty(store) {

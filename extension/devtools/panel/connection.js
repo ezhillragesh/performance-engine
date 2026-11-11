@@ -88,9 +88,12 @@ export function createConnection({ tabId, onMessage, onState }) {
     requestSnapshot() {
       return post({ type: "REQUEST_SNAPSHOT", tabId });
     },
-    /** Injection control (PROTOCOL.md v2.1): INJECTION_STATUS_REQUEST / ENABLE_INJECTION / DISABLE_INJECTION. */
-    injection(type, origin) {
-      return post({ type, tabId, origin, payload: { origin } });
+    /**
+     * Injection control (PROTOCOL.md v2.1): INJECTION_STATUS_REQUEST / ENABLE_INJECTION /
+     * DISABLE_INJECTION (`extra.removePermission`) / INJECTION_INTENT.
+     */
+    injection(type, origin, extra) {
+      return post({ type, tabId, origin, ...(extra || {}), payload: { origin } });
     },
   };
 }
