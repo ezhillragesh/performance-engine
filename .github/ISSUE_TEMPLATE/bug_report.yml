@@ -1,0 +1,56 @@
+name: Bug report
+description: Something is wrong in the engine, the DevTools extension or the demo.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not paste private data: exports can contain URLs (query values are stripped) and element snippets.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - core (npm package performance-engine)
+        - extension (Perf Intelligence DevTools)
+        - demo
+        - accessibility audit
+        - docs
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Engine mode (shown in the panel toolbar badge)
+      options:
+        - App engine
+        - Injected engine
+        - DevTools only
+        - Not applicable
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: For a wrong or missing insight, include the issue type, and the insight or trace JSON if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal page, a demo Scenario Lab card, or a code snippet.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: performance-engine version, extension version, Chrome version, React version (if any)
+      placeholder: "performance-engine 0.4.0, extension 0.4.0, Chrome 131, React 19.2"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output or exported JSON (optional)
+      render: shell
