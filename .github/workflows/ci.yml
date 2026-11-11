@@ -1,0 +1,106 @@
+# Runs the same gates as `npm run check` at the repo root (see CONTRIBUTING.md), one job per subsystem.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Dev tooling needs ^22.22.2 || ^24.15.0 || >=26 (jsdom 30, vite 8). The published package itself is plain ESM.
+  NODE_VERSION: lts/*
+
+jobs:
+  core:
+    name: core (typecheck, test, package, vendor drift)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: core
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: core
+      - name: Test (core + a11y)
+        run: npm test
+        working-directory: core
+      - name: Build + package check (npm pack, Node/tsc/esbuild consumer checks)
+        run: npm run check:package
+        working-directory: core
+      - name: Vendor drift (extension/vendor must match core)
+        run: node scripts/check-vendor.mjs
+
+  extension:
+    name: extension (syntax)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Manifest is valid JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
+      - name: Syntax-check classic scripts and ES modules
+        run: node scripts/check-extension.mjs
+
+  demo:
+    name: demo (typecheck, lint, build, e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: demo
+      - name: Typecheck (also type-checks the core sources the demo imports)
+        run: npx tsc -b
+        working-directory: demo
+      - name: Lint
+        run: npm run lint
+        working-directory: demo
+      - name: Build (tsc -b + vite build)
+        run: npm run build
+        working-directory: demo
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: demo
+      - name: End-to-end (every scenario, dev server and production build)
+        run: npm run e2e
+        working-directory: demo
+        env:
+          CI: "true"
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: demo/playwright-report
+          retention-days: 14

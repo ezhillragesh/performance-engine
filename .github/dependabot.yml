@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+  - package-ecosystem: npm
+    directory: /core
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(core)
+    groups:
+      dev-dependencies:
+        patterns: ["*"]
+    ignore:
+      # Vendored accessibility engines: upgrade by hand (CONTRIBUTING.md, "Upgrading an accessibility engine").
+      - dependency-name: axe-core
+      - dependency-name: accessibility-checker-engine
+      # vitest 5 dropped `bench`.
+      - dependency-name: vitest
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: npm
+    directory: /demo
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(demo)
+    groups:
+      dependencies:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: axe-core
+      - dependency-name: accessibility-checker-engine

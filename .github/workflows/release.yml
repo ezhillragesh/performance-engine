@@ -1,0 +1,91 @@
+# Release: publishes `performance-engine` (core/) to npm with provenance and attaches the extension zip
+# to a GitHub release. See CONTRIBUTING.md "Release process" for the one-time setup (npm trusted
+# publishing, the `release` environment) and the steps before tagging.
+#
+# - Push a tag vX.Y.Z  -> verify, publish to npm, create the GitHub release.
+# - Run manually        -> verify and `npm publish --dry-run` only (nothing is published).
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify (all gates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          package-manager-cache: false
+      - name: Install
+        run: npm run setup
+      - name: All gates (core, vendor drift, extension, demo)
+        run: npm run check
+      - name: Versions match the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          core="$(node -p "require('./core/package.json').version")"
+          ext="$(node -p "require('./extension/manifest.json').version")"
+          echo "tag=$TAG core=$core extension=$ext"
+          test "v$core" = "$TAG" || { echo "::error::core/package.json version $core does not match tag $TAG"; exit 1; }
+          test "v$ext" = "$TAG" || { echo "::error::extension/manifest.json version $ext does not match tag $TAG"; exit 1; }
+          grep -Eq "^## \[$core\] - [0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md || { echo "::error::CHANGELOG.md needs a dated '## [$core] - YYYY-MM-DD' section"; exit 1; }
+
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Protect with required reviewers in Settings -> Environments -> release.
+    environment: release
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # npm trusted publishing + provenance
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: npm >= 11.5.1 (trusted publishing)
+        run: npm install -g npm@^11.5.1
+      # `npm publish` runs prepublishOnly (typecheck, tests, check:package) and prepack (clean build).
+      - name: Install core
+        working-directory: core
+        run: npm ci
+      - name: Publish (dry run)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        working-directory: core
+        run: npm publish --dry-run --access public
+      - name: Publish to npm with provenance
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: core
+        run: npm publish --provenance --access public
+      - name: Package the extension
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/package-extension.mjs
+      - name: GitHub release with the extension zip
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist-extension/*.zip --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/CHANGELOG.md)."
