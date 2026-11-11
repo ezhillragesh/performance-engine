@@ -12,6 +12,7 @@ import { percentile } from "../stats.js";
 import {
   affectedComponents,
   cascadeRoot,
+  confidenceFromEvidence,
   createInsight,
   ids,
   maxBurst,
@@ -38,6 +39,38 @@ function minSeverity(a: Severity, b: Severity): Severity {
 }
 
 /**
+ * Without timing data (React production builds report no actualDuration /
+ * selfBaseDuration; manual tracking without durations) the render cost is
+ * unknown, not zero. A render count alone cannot prove a user-visible
+ * problem, so count-based render insights are capped here, carry less
+ * confidence, and say why.
+ */
+export const UNKNOWN_COST_MAX_SEVERITY: Severity = "medium";
+/** Evidence weights are scaled by this, so confidence (still derived from evidence) drops too. */
+export const UNKNOWN_COST_WEIGHT_FACTOR = 0.6;
+const UNKNOWN_COST_NOTE =
+  "Render timings were unavailable (e.g. a React production build), so the cost is unknown and the severity is based on the render count only.";
+
+/** Applies the unknown-cost cap to an insight built from renders without timings. Id and window are unchanged. */
+export function capUnknownRenderCost(insight: Insight): Insight {
+  const evidence: Evidence[] = insight.evidence.map((e) => ({ ...e, weight: Math.round(e.weight * UNKNOWN_COST_WEIGHT_FACTOR * 100) / 100 }));
+  evidence.push({ kind: "heuristic", label: "Render timings unavailable: severity from render count only", value: "unknown", weight: 0 });
+  return {
+    ...insight,
+    severity: minSeverity(insight.severity, UNKNOWN_COST_MAX_SEVERITY),
+    confidence: confidenceFromEvidence(evidence),
+    cause: `${insight.cause} ${UNKNOWN_COST_NOTE}`,
+    evidence,
+    metadata: { ...insight.metadata, renderCostUnknown: true },
+  };
+}
+
+/** `insight` as is when render timings were measured, else capped (see capUnknownRenderCost). */
+function withRenderCost(insight: Insight, known: boolean): Insight {
+  return known ? insight : capUnknownRenderCost(insight);
+}
+
+/**
  * Severity for render-count rules (bursts, keystroke loops). Without
  * durations (production builds) the count decides. With measured durations
  * the cost does: a cascade that renders in under a quarter frame is low, one
@@ -50,6 +83,17 @@ function renderCountSeverity(countSeverity: Severity, totalMs: number, known: bo
   if (totalMs < FRAME_MS / 4) return "low";
   if (totalMs < FRAME_MS) return minSeverity(countSeverity, "medium");
   return maxSeverity(countSeverity, severityFromLatency(totalMs * costFactor));
+}
+
+/**
+ * Render-count rules (bursts, keystroke loops) count re-renders only. Mounting
+ * the UI an interaction opens (a panel, ten list rows) is its intended effect,
+ * not a cascade; the cost of a heavy mount is still reported by the cost-based
+ * rules (render latency, slow component, long task). Manual renders without a
+ * phase count as re-renders.
+ */
+function isRerender(render: RenderEvent): boolean {
+  return render.phase !== "mount";
 }
 
 // ── Rule 1: interaction-induced render burst ─────────────────────────
@@ -71,7 +115,7 @@ export const interactionRenderBurstRule: AnalysisRule = {
     for (const trace of context.traces) {
       if (trace.renders.length < BURST_MIN_RENDERS) continue;
       if (explained.has(trace.traceId)) continue;
-      const renders = collapseRendersPerCommit(trace.commits);
+      const renders = collapseRendersPerCommit(trace.commits).filter(isRerender);
       if (renders.length < BURST_MIN_RENDERS) continue;
       const burst = maxBurst(renders, BURST_WINDOW_MS);
       if (burst.count < BURST_MIN_RENDERS) continue;
@@ -122,7 +166,7 @@ export const interactionRenderBurstRule: AnalysisRule = {
           ? `State update in ${root} propagated to ${affected.length} component(s) (${affected.slice(0, 3).join(", ")}).`
           : `State updates in ${root} triggered ${burst.count} renders in ${spanMs}ms.`;
 
-      out.push(
+      out.push(withRenderCost(
         createInsight({
           issueType: "interaction-induced-render-burst",
           category: "rendering",
@@ -146,7 +190,8 @@ export const interactionRenderBurstRule: AnalysisRule = {
             timeWindowEnd: trace.endTime,
           },
         }),
-      );
+        known,
+      ));
     }
     return out;
   },
@@ -158,6 +203,23 @@ const KEYSTROKE_MIN_RENDERS = 3;
 const KEYSTROKE_WINDOW_MS = 120;
 const INPUT_TRIGGERS = new Set(["input", "keydown", "change"]);
 
+/**
+ * True when the trace's keyboard / input events went to a text-entry target:
+ * a keystroke render loop is about typing, not shortcuts on `body` or arrow
+ * keys on tab buttons. Uses the `editable` flag captured at event time; events
+ * from older engines (no flag) fall back to the target descriptor's tag.
+ */
+export function isTextEntryTrace(trace: InteractionTrace): boolean {
+  let flagged = false;
+  for (const u of trace.uiEvents) {
+    if (!INPUT_TRIGGERS.has(u.eventType)) continue;
+    if (u.editable === true) return true;
+    if (u.editable === false) flagged = true;
+  }
+  if (flagged) return false;
+  return trace.uiEvents.some((u) => INPUT_TRIGGERS.has(u.eventType) && /^(input|textarea)(?![\w-])/.test(u.target));
+}
+
 export const keystrokeRenderLoopRule: AnalysisRule = {
   name: "keystroke-render-loop",
   run(context: AnalysisContext): Insight[] {
@@ -166,8 +228,9 @@ export const keystrokeRenderLoopRule: AnalysisRule = {
       const trigger = trace.committedTrigger;
       if (!INPUT_TRIGGERS.has(trigger.eventType)) continue;
       if (trace.renders.length < KEYSTROKE_MIN_RENDERS) continue;
+      if (!isTextEntryTrace(trace)) continue;
       const renders = collapseRendersPerCommit(trace.commits).filter(
-        (r) => r.timestamp >= trigger.timestamp && r.timestamp - trigger.timestamp <= KEYSTROKE_WINDOW_MS,
+        (r) => isRerender(r) && r.timestamp >= trigger.timestamp && r.timestamp - trigger.timestamp <= KEYSTROKE_WINDOW_MS,
       );
       if (renders.length < KEYSTROKE_MIN_RENDERS) continue;
       const { totalMs, known } = renderTime(renders);
@@ -196,7 +259,7 @@ export const keystrokeRenderLoopRule: AnalysisRule = {
         });
       }
       const countSeverity: Severity = renders.length >= KEYSTROKE_MIN_RENDERS * 3 ? "high" : "medium";
-      out.push(
+      out.push(withRenderCost(
         createInsight({
           issueType: "keystroke-render-loop",
           category: "rendering",
@@ -220,7 +283,8 @@ export const keystrokeRenderLoopRule: AnalysisRule = {
             timeWindowEnd: trace.endTime,
           },
         }),
-      );
+        known,
+      ));
     }
     return out;
   },
@@ -324,7 +388,7 @@ function thrashInsight(context: AnalysisContext, cluster: RenderEvent[]): Insigh
   const trace = traceId ? context.traceById.get(traceId) : undefined;
   if (trace) evidence.push(traceEvidence(trace, []));
 
-  return createInsight({
+  return withRenderCost(createInsight({
     issueType: "state-thrashing",
     category: "rendering",
     severity: severityFromRatio(cluster.length, THRASH_MIN_COMMITS),
@@ -346,7 +410,7 @@ function thrashInsight(context: AnalysisContext, cluster: RenderEvent[]): Insigh
       timeWindowStart: first.timestamp,
       timeWindowEnd: last.timestamp,
     },
-  });
+  }), known);
 }
 
 // ── Rule 6: wasted renders ───────────────────────────────────────────
@@ -439,7 +503,7 @@ export const wastedRenderRule: AnalysisRule = {
         if (scope.trace) evidence.push(traceEvidence(scope.trace, []));
         const first = entry.wasted[0]!;
         const last = entry.wasted[entry.wasted.length - 1]!;
-        out.push(
+        out.push(withRenderCost(
           createInsight({
             issueType: "wasted-render",
             category: "rendering",
@@ -462,7 +526,8 @@ export const wastedRenderRule: AnalysisRule = {
               timeWindowEnd: last.timestamp,
             },
           }),
-        );
+          known,
+        ));
       }
     }
     return out;

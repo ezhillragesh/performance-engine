@@ -178,6 +178,12 @@ export function buildTraceSummaries(
     };
     if (trace.committedTrigger.label !== undefined) summary.trigger.label = trace.committedTrigger.label;
     if (latencyMs !== undefined) summary.latencyMs = round(latencyMs);
+    for (const u of trace.uiEvents) {
+      if (u.eventType === "action") {
+        summary.action = u.target;
+        break;
+      }
+    }
     summaries.push(summary);
   }
   return summaries;

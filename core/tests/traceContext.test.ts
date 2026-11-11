@@ -3,6 +3,7 @@ import {
   activateTrace,
   beginTrace,
   captureTraceId,
+  enterResponseContext,
   findTraceActiveAt,
   findTraceByTriggerTime,
   getActiveTraceId,
@@ -173,6 +174,34 @@ describe("trace context: task boundaries", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(getActiveTraceId()).toBe(newer.traceId);
+  });
+
+  it("a response whose request had no trace hides the live interaction for its continuation, then restores it", async () => {
+    const live = onUserEvent("click");
+    enterResponseContext(undefined); // e.g. a page-load fetch resolving while the user clicks
+    expect(captureTraceId()).toBeUndefined();
+    let inMicrotask: string | undefined = "unset";
+    queueMicrotask(() => {
+      inMicrotask = captureTraceId(); // a framework flush queued by the continuation
+    });
+    await Promise.resolve();
+    expect(inMicrotask).toBeUndefined();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getActiveTraceId()).toBe(live.traceId);
+  });
+
+  it("an untraced response neither hides new input nor does anything when no trace is live", async () => {
+    enterResponseContext(undefined);
+    expect(getActiveTraceId()).toBeUndefined();
+    const live = onUserEvent("click");
+    enterResponseContext(undefined);
+    const next = onUserEvent("keydown"); // new user input during the continuation is never hidden
+    expect(captureTraceId()).toBe(next.traceId);
+    expect(next.traceId).not.toBe(live.traceId);
+    // A traced response still borrows its own trace (unchanged behaviour).
+    enterResponseContext(live.traceId!);
+    expect(getActiveTraceId()).toBe(live.traceId);
   });
 
   it("a response re-activates its trace for one idle period when nothing else is live", async () => {

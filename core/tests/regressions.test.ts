@@ -5,11 +5,12 @@
 import { describe, expect, it } from "vitest";
 import { analyzeEvents } from "../analyzer/engine.js";
 import { buildAnalysisContext, buildCommits } from "../analyzer/context.js";
-import { renderTime } from "../analyzer/rules/shared.js";
+import { confidenceFromEvidence, renderTime } from "../analyzer/rules/shared.js";
+import { capUnknownRenderCost } from "../analyzer/rules/rendering.js";
 import { computeSummary, topComponents } from "../analyzer/summary.js";
 import { buildTraceSummaries } from "../analyzer/traces.js";
 import { groupInteractionTimings } from "../analyzer/interactions.js";
-import type { TrackedEvent } from "../types/events.js";
+import type { RenderEvent, TrackedEvent } from "../types/events.js";
 import type { Insight, IssueType } from "../types/insights.js";
 import { interaction, net, render, TraceBuilder } from "./fixtures.js";
 
@@ -139,7 +140,7 @@ describe("aborted requests are not failures", () => {
 describe("a keystroke's renders are reported once", () => {
   it("keystroke-render-loop wins over a render burst for the same trace", () => {
     const b = new TraceBuilder();
-    b.trigger("keydown", 0);
+    b.trigger("keydown", 0, { target: "input#search", editable: true });
     b.commitAt(10, ["Workbench", "Panels", "A", "B", "C", "D", "E", "F"], { durationMs: 3 });
     const insights = analyzeEvents(b.events);
     expect(ofType(insights, "keystroke-render-loop")).toHaveLength(1);
@@ -188,21 +189,98 @@ describe("render-count severity follows measured cost", () => {
 
   it("a controlled input re-rendering its form (3 renders, 2ms) is low", () => {
     const b = new TraceBuilder();
-    b.trigger("keydown", 0);
+    b.trigger("keydown", 0, { target: "input#title", editable: true });
     b.commitAt(3, ["TaskPanel", "TaskForm", "Button"], { durationMs: 0.7, selfDurationMs: 0.7 });
     const [insight] = ofType(analyzeEvents(b.events), "keystroke-render-loop");
     expect(insight!.severity).toBe("low");
   });
 
-  it("frame-dropping cascades still escalate; unknown durations use the count", () => {
+  it("frame-dropping cascades still escalate; unknown durations are capped at medium (see production-build block)", () => {
     const heavy = new TraceBuilder();
-    heavy.trigger("keydown", 0);
+    heavy.trigger("keydown", 0, { target: "textarea#notes", editable: true });
     heavy.commitAt(3, ["Panels", "A", "B", "C", "D", "E", "F", "G", "H", "I"], { durationMs: 3, selfDurationMs: 3 });
     expect(ofType(analyzeEvents(heavy.events), "keystroke-render-loop")[0]!.severity).toBe("high");
     const prod = new TraceBuilder();
     prod.trigger("click", 0);
     prod.commitAt(10, Array.from({ length: 28 }, (_, i) => `Row${i}`));
-    expect(ofType(analyzeEvents(prod.events), "interaction-induced-render-burst")[0]!.severity).toBe("high");
+    expect(ofType(analyzeEvents(prod.events), "interaction-induced-render-burst")[0]!.severity).toBe("medium");
+  });
+});
+
+describe("production builds: render cost unknown is not critical", () => {
+  // React production builds report no actualDuration / selfBaseDuration: cost is unknown, not 0ms.
+  const strip = (events: TrackedEvent[]): TrackedEvent[] =>
+    events.map((e) => (e.type === "render" ? { ...e, durationMs: 0, selfDurationMs: undefined } : e));
+  const UNKNOWN = /timings were unavailable/;
+
+  function burst(durationMs: number): TrackedEvent[] {
+    const b = new TraceBuilder();
+    b.trigger("click", 0);
+    b.commitAt(10, Array.from({ length: 120 }, (_, i) => `Row${i}`), { durationMs, selfDurationMs: durationMs });
+    return b.events;
+  }
+
+  function expectCapped(insight: Insight | undefined): void {
+    expect(insight).toBeDefined();
+    expect(insight!.severity).toBe("medium");
+    expect(insight!.cause).toMatch(UNKNOWN);
+    expect(insight!.metadata?.renderCostUnknown).toBe(true);
+    expect(insight!.confidence).toBe(confidenceFromEvidence(insight!.evidence));
+    expect(insight!.evidence.some((e) => e.kind === "heuristic" && e.value === "unknown")).toBe(true);
+  }
+
+  it("a 120-render burst with no timings is capped at medium, less confident, same id as the dev-build insight", () => {
+    const events = burst(1);
+    const dev = ofType(analyzeEvents(events), "interaction-induced-render-burst")[0]!;
+    const prod = ofType(analyzeEvents(strip(events)), "interaction-induced-render-burst")[0];
+    expect(dev.severity).toBe("critical"); // measured: unchanged
+    expect(dev.cause).not.toMatch(UNKNOWN);
+    expect(dev.metadata?.renderCostUnknown).toBeUndefined();
+    expectCapped(prod);
+    expect(prod!.id).toBe(dev.id);
+    expect(prod!.confidence).toBeLessThan(dev.confidence);
+  });
+
+  it("wasted renders flagged by fiber comparison but without timings are capped", () => {
+    const events = Array.from({ length: 30 }, (_, i) =>
+      render("Row", i * 200, { instanceId: "Row#1", commitId: i + 1, phase: "update", wasted: true }),
+    );
+    expectCapped(ofType(analyzeEvents(events), "wasted-render")[0]);
+  });
+
+  it("keystroke render loops and state thrashing without timings are capped", () => {
+    const keys = new TraceBuilder();
+    keys.trigger("keydown", 0, { target: "input#search" }); // older engine: no editable flag
+    keys.commitAt(3, ["Panels", "A", "B", "C", "D", "E", "F", "G", "H", "I"]);
+    expectCapped(ofType(analyzeEvents(keys.events), "keystroke-render-loop")[0]);
+
+    const thrash = new TraceBuilder();
+    thrash.trigger("click", 0);
+    for (let i = 0; i < 20; i += 1) thrash.commitAt(5 + i * 10, ["Ticker"], { instanceId: "Ticker#1", stateChanged: true });
+    expectCapped(ofType(analyzeEvents(thrash.events), "state-thrashing")[0]);
+  });
+
+  it("negative: measured timings (even one render) keep the rule's own severity and no note", () => {
+    const events = strip(burst(1));
+    const firstRender = events.findIndex((e) => e.type === "render");
+    events[firstRender] = { ...(events[firstRender] as RenderEvent), durationMs: 40, selfDurationMs: 40 };
+    const insight = ofType(analyzeEvents(events), "interaction-induced-render-burst")[0]!;
+    expect(insight.severity).toBe("critical");
+    expect(insight.cause).not.toMatch(UNKNOWN);
+    expect(insight.metadata?.renderCostUnknown).toBeUndefined();
+
+    const heavy = Array.from({ length: 20 }, (_, i) =>
+      render("ExpensiveChart", i * 200, { instanceId: "Chart#1", commitId: i + 1, phase: "update", wasted: true, durationMs: 8, selfDurationMs: 8 }),
+    );
+    const wasted = ofType(analyzeEvents(heavy), "wasted-render")[0]!;
+    expect(["high", "critical"]).toContain(wasted.severity);
+    expect(wasted.metadata?.renderCostUnknown).toBeUndefined();
+  });
+
+  it("capUnknownRenderCost never raises severity", () => {
+    const low = ofType(analyzeEvents(burst(0.01)), "interaction-induced-render-burst")[0]!;
+    expect(low.severity).toBe("low");
+    expect(capUnknownRenderCost(low).severity).toBe("low");
   });
 });
 

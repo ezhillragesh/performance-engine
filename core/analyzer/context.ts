@@ -219,6 +219,15 @@ export function buildCommits(renders: readonly RenderEvent[]): RenderCommit[] {
   return commits;
 }
 
+/**
+ * True for a trace opened by `startAction()` / `trackAction()` rather than by
+ * user input: it is analysed like any trace, but it is not an interaction
+ * (no input latency, not counted as one).
+ */
+export function isActionTrace(trace: InteractionTrace): boolean {
+  return trace.trigger.eventType === "action";
+}
+
 /** Instance identity for grouping: instanceId when known, else component name. */
 export function instanceKey(render: RenderEvent): string {
   return render.instanceId ?? render.componentName;

@@ -9,7 +9,7 @@
 import type { UIEvent, UIEventType } from "../types/events.js";
 import { pushEvent } from "../logger/store.js";
 import { onUserEvent } from "../trace/traceContext.js";
-import { describeLabel, describeTarget } from "./dom.js";
+import { describeLabel, describeTarget, isTextEntryTarget } from "./dom.js";
 import { generateEventId, getCurrentSessionId } from "./id.js";
 import { now } from "./time.js";
 
@@ -63,6 +63,8 @@ export function createUIEventHandler(): (domEvent: Event) => void {
       const label = describeLabel(domEvent.target);
       if (label !== undefined) event.label = label;
       if (domTimestamp !== undefined) event.domTimestamp = domTimestamp;
+      // Lets the analysis tell typing apart from shortcuts / arrow keys on buttons.
+      if (eventType === "keydown" || eventType === "input" || eventType === "change") event.editable = isTextEntryTarget(domEvent.target);
       if (traceId !== undefined) event.traceId = traceId;
       if (startsTrace) event.startsTrace = true;
       pushEvent(event);

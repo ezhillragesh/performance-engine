@@ -42,13 +42,15 @@ export function trackRender(
 ): void {
   if (!enabled) return;
   try {
+    const start = extra?.timestamp;
     const event: RenderEvent = {
       source: "manual",
       ...extra,
       type: "render",
-      componentName,
+      componentName: typeof componentName === "string" && componentName ? componentName : "Anonymous",
       durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0,
-      timestamp: extra?.timestamp ?? now(),
+      // A bogus start time (NaN from a failed subtraction) must not be dropped silently.
+      timestamp: typeof start === "number" && Number.isFinite(start) ? start : now(),
       eventId: generateEventId(),
       sessionId: getCurrentSessionId(),
     };

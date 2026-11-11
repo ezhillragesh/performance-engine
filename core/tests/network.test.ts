@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { normaliseMethod, sanitizeUrl, startNetworkTracking } from "../tracker/networkTracker.js";
 import { getEvents, resetStore } from "../logger/store.js";
-import { beginTrace, getActiveTraceId, resetTraceContext } from "../trace/traceContext.js";
+import { beginTrace, getActiveTraceId, onUserEvent, resetTraceContext } from "../trace/traceContext.js";
 import { setTimeSource } from "../tracker/time.js";
 import type { NetworkEvent } from "../types/events.js";
 
@@ -101,6 +101,35 @@ describe("fetch tracking", () => {
       initiator: "fetch",
     });
     stop();
+  });
+
+  it("a request started outside any trace does not lend the live interaction to its continuation", async () => {
+    const stop = startNetworkTracking();
+    try {
+      const pageLoad = g.fetch!("/api/messages"); // no trace: started at page load
+      const xhr = new (g.XMLHttpRequest as typeof XMLHttpRequest)();
+      xhr.open("GET", "/api/poll");
+      xhr.send();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const click = onUserEvent("click"); // the user clicks while both are in flight
+      pending[0]!.resolve(fakeResponse());
+      const inContinuation = await pageLoad.then(() => getActiveTraceId());
+      expect(inContinuation).toBeUndefined();
+      let inXhrHandler: string | undefined = "unset";
+      xhr.addEventListener("load", () => {
+        inXhrHandler = getActiveTraceId();
+      });
+      (xhr as unknown as FakeXHR).finish(200);
+      expect(inXhrHandler).toBeUndefined();
+      expect(networkEvents().every((e) => e.traceId === undefined)).toBe(true);
+      // The live interaction comes back once the continuations are done.
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(getActiveTraceId()).toBe(click.traceId);
+    } finally {
+      stop();
+    }
   });
 
   it("records failures with an error message and rethrows", async () => {
@@ -216,5 +245,44 @@ describe("XHR re-open", () => {
       ["/second", 200, undefined],
     ]);
     stop();
+  });
+});
+
+describe("bookkeeping failures never reach the app", () => {
+  it("a fetch still resolves (and a failure still rejects with the app's own error) when recording throws", async () => {
+    const stop = startNetworkTracking();
+    try {
+      const ok = fetch("/api/ok");
+      const failing = fetch("/api/fail");
+      setTimeSource(() => {
+        throw new Error("engine bug");
+      });
+      const response = fakeResponse();
+      pending[0]!.resolve(response);
+      const appError = new TypeError("Failed to fetch");
+      pending[1]!.reject(appError);
+      await expect(ok).resolves.toBe(response);
+      await expect(failing).rejects.toBe(appError);
+    } finally {
+      setTimeSource(() => clock);
+      stop();
+    }
+  });
+
+  it("XHR listeners swallow recording errors", () => {
+    const stop = startNetworkTracking();
+    try {
+      beginTrace("click");
+      const xhr = new (g.XMLHttpRequest as typeof XMLHttpRequest)();
+      xhr.open("GET", "/api/x");
+      xhr.send();
+      setTimeSource(() => {
+        throw new Error("engine bug");
+      });
+      expect(() => (xhr as unknown as FakeXHR).finish(200)).not.toThrow();
+    } finally {
+      setTimeSource(() => clock);
+      stop();
+    }
   });
 });

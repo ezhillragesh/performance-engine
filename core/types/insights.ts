@@ -177,6 +177,8 @@ export interface TraceSummary {
   durationMs: number;
   /** Browser-measured latency (Event Timing) when available. */
   latencyMs?: number;
+  /** Name of the first `startAction()` / `trackAction()` action recorded in the trace (v0.4). */
+  action?: string;
   renderCount: number;
   networkCount: number;
   longTaskMs: number;

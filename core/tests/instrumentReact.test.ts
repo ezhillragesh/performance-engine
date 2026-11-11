@@ -174,6 +174,14 @@ describe("fiber walk", () => {
     expect(collectCommitRenders(mountTree().root, { maxDepth: 1 }).map((e) => e.componentName)).toEqual(["App"]);
   });
 
+  it("a /g or /y ignore RegExp matches on every commit, not every other one (lastIndex)", () => {
+    const ignore = [/Item/g, /^Fan/y];
+    for (let commit = 0; commit < 3; commit += 1) {
+      const names = collectCommitRenders(mountTree().root, { ignore }).map((e) => e.componentName);
+      expect(names.sort()).toEqual(["App", "Input"]);
+    }
+  });
+
   it("stamps the active trace on every render of the commit", () => {
     const traceId = beginTrace("click");
     const events = collectCommitRenders(mountTree().root);

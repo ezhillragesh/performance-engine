@@ -121,8 +121,11 @@ export function startDevtoolsBridge(session: BridgeSession, options: DevtoolsBri
   if (!win || typeof win.postMessage !== "function" || typeof win.addEventListener !== "function") {
     return () => undefined;
   }
-  const intervalMs = Math.max(100, options.snapshotIntervalMs ?? 1000);
-  const maxEvents = Math.max(0, options.maxEvents ?? 1500);
+  // Non-finite values (NaN, Infinity from untyped config) fall back to the defaults: setInterval
+  // treats Infinity as 0, which would stream snapshots in a busy loop.
+  const finite = (value: unknown, fallback: number): number => (typeof value === "number" && Number.isFinite(value) ? value : fallback);
+  const intervalMs = Math.min(2_147_483_647, Math.max(100, finite(options.snapshotIntervalMs, 1000)));
+  const maxEvents = Math.max(0, finite(options.maxEvents, 1500));
   let attached = false;
   let timer: ReturnType<typeof setInterval> | null = null;
   let lastSignature = "";

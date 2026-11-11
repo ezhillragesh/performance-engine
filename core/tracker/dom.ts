@@ -70,6 +70,34 @@ export function describeLabel(target: EventTarget | null | undefined): string | 
   }
 }
 
+/** `<input type>`s that take typed text (the empty string is the default type, text). */
+const TEXT_INPUT_TYPES: ReadonlySet<string> = new Set(["", "text", "search", "email", "url", "tel", "password", "number"]);
+const TEXT_ENTRY_ROLES: ReadonlySet<string> = new Set(["textbox", "searchbox", "combobox"]);
+
+/**
+ * True when `target` takes text entry: a text-like `<input>`, a `<textarea>`,
+ * contenteditable content, or an element with role textbox / searchbox /
+ * combobox. Reads only the element type and attributes, never the value.
+ */
+export function isTextEntryTarget(target: EventTarget | null | undefined): boolean {
+  try {
+    if (!isElement(target)) return false;
+    const tag = target.tagName.toLowerCase();
+    if (tag === "textarea") return true;
+    if (tag === "input") {
+      // The `type` property normalises unknown types to "text"; fall back to the attribute (SVG / test DOMs).
+      const prop = (target as Element & { type?: unknown }).type;
+      const type = typeof prop === "string" ? prop : (target.getAttribute("type") ?? "");
+      return TEXT_INPUT_TYPES.has(type.trim().toLowerCase());
+    }
+    const role = (target.getAttribute("role") ?? "").trim().toLowerCase().split(/\s+/)[0] ?? "";
+    if (TEXT_ENTRY_ROLES.has(role)) return true;
+    return isEditable(target);
+  } catch {
+    return false;
+  }
+}
+
 /** A subtree with more text than this is a container, not a label. */
 const TEXT_SCAN_LIMIT = 2000;
 /** Max nodes visited, so a huge subtree with little text is still cheap. */

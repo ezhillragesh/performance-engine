@@ -264,6 +264,31 @@ export function activateTrace(traceId: string): void {
 }
 
 /**
+ * Context for a response's continuation (fetch resolution, XHR readyState 4):
+ * - the request had a trace: `activateTrace(traceId)` (response window, or a
+ *   borrow when a newer interaction is live);
+ * - the request had NO trace (e.g. started at page load): a live interaction
+ *   is hidden for the synchronous continuation and the framework flushes it
+ *   queues as microtasks, then restored. Nothing the response causes there is
+ *   blamed on whatever the user happens to be doing.
+ */
+export function enterResponseContext(traceId: string | undefined): void {
+  if (traceId !== undefined) {
+    activateTrace(traceId);
+    return;
+  }
+  const t = now();
+  const live = active && !isExpired(active, t) ? active : null;
+  if (!live || detachedId === live.id) return;
+  detachedId = live.id;
+  scheduleMicrotask(() =>
+    scheduleMicrotask(() => {
+      if (detachedId === live.id && active === live) detachedId = null;
+    }),
+  );
+}
+
+/**
  * Runs `fn` with `traceId` active. The trace stays active afterwards for one
  * idle period so microtasks/renders caused by `fn` inherit it.
  */
@@ -338,6 +363,8 @@ export function findTraceByTriggerTime(time: number, toleranceMs = 50): string |
   let bestDelta = toleranceMs;
   for (let i = ring.length - 1; i >= 0; i -= 1) {
     const record = ring[i]!;
+    // Programmatic traces have no browser input to match.
+    if (record.triggerType === "manual" || record.triggerType === "action") continue;
     for (const triggerTime of record.triggerTimes) {
       const delta = Math.abs(triggerTime - time);
       if (delta < bestDelta || (delta === bestDelta && !best)) {
@@ -359,6 +386,21 @@ export function findTraceActiveAt(time: number): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Ends `traceId` early if it is the active trace: work captured afterwards is
+ * no longer attributed to it (a response it is waiting for still re-activates
+ * it). No-op for any other trace.
+ */
+export function endTrace(traceId: string): void {
+  if (pinned !== null && pinned.id === traceId) pinned = null;
+  if (pendingPointer !== null && pendingPointer.traceId === traceId) pendingPointer = null;
+  if (active !== null && active.id === traceId) {
+    markActivity(traceId, now());
+    active = null;
+    detachedId = null;
+  }
 }
 
 export function getRecentTraceRecords(): TraceRecord[] {

@@ -257,7 +257,14 @@ function didPerformWork(fiber: FiberLike): boolean {
 function isIgnored(name: string, ignore: readonly (string | RegExp)[]): boolean {
   if (INTERNAL_NAMES.has(name)) return true;
   for (const pattern of ignore) {
-    if (typeof pattern === "string" ? pattern === name : pattern.test(name)) return true;
+    if (typeof pattern === "string") {
+      if (pattern === name) return true;
+    } else if (pattern instanceof RegExp) {
+      // `test` on a /g or /y RegExp continues from lastIndex, so the same name would match
+      // only every other commit.
+      pattern.lastIndex = 0;
+      if (pattern.test(name)) return true;
+    }
   }
   return false;
 }

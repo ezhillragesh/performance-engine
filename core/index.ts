@@ -13,11 +13,15 @@ export * from "./analyzer/explain.js";
 export * from "./logger/store.js";
 
 export * from "./trace/traceContext.js";
+export { startAction, trackAction, setActionTrackingEnabled, isActionTrackingEnabled, MAX_ACTION_NAME_LENGTH } from "./trace/actions.js";
+export type { ActionHandle, ActionOptions } from "./trace/actions.js";
 
 export * from "./tracker/eventTracker.js";
 export * from "./tracker/networkTracker.js";
 export * from "./tracker/renderTracker.js";
 export * from "./tracker/performanceTracker.js";
+export { startWebVitalsTracking, rateWebVital, emptyWebVitals, WEB_VITAL_THRESHOLDS } from "./tracker/webVitals.js";
+export type { WebVitalsTracker } from "./tracker/webVitals.js";
 export { describeLabel, describeTarget } from "./tracker/dom.js";
 export * from "./tracker/time.js";
 export * from "./tracker/id.js";

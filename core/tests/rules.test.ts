@@ -316,3 +316,61 @@ describe("trace scoping", () => {
     expect(ofType(insights, "interaction-induced-render-burst")).toHaveLength(0);
   });
 });
+
+describe("keystroke-render-loop is about typing", () => {
+  const renders = ["Shell", "Tabs", "Panel", "List", "Row"];
+
+  it("negative: shortcuts on body and arrow keys on tab buttons are not keystroke loops", () => {
+    const shortcut = new TraceBuilder();
+    shortcut.trigger("keydown", 0, { target: "body", editable: false });
+    shortcut.commitAt(5, renders, { durationMs: 2, selfDurationMs: 2 });
+    const arrow = new TraceBuilder();
+    arrow.trigger("keydown", 1000, { target: "button#tab-lab", editable: false });
+    arrow.commitAt(1005, renders, { durationMs: 2, selfDurationMs: 2 });
+    const legacy = new TraceBuilder(); // older engine, no flag: decided by the target tag
+    legacy.trigger("keydown", 2000, { target: "button#tab-about" });
+    legacy.commitAt(2005, renders, { durationMs: 2, selfDurationMs: 2 });
+    expect(ofType(run([...shortcut.events, ...arrow.events, ...legacy.events]), "keystroke-render-loop")).toHaveLength(0);
+  });
+
+  it("positive: typing into a text-entry target (flag or, for older engines, an input/textarea tag)", () => {
+    const flagged = new TraceBuilder();
+    flagged.trigger("keydown", 0, { target: "div#editor.prose", editable: true }); // contenteditable
+    flagged.commitAt(5, renders, { durationMs: 2, selfDurationMs: 2 });
+    const legacy = new TraceBuilder();
+    legacy.trigger("keydown", 1000, { target: "textarea#notes" });
+    legacy.commitAt(1005, renders, { durationMs: 2, selfDurationMs: 2 });
+    expect(ofType(run([...flagged.events, ...legacy.events]), "keystroke-render-loop")).toHaveLength(2);
+  });
+});
+
+describe("render-count rules count re-renders, not mounts", () => {
+  const rows = Array.from({ length: 10 }, (_, i) => `Row${i}`);
+
+  it("negative: a click that mounts 10 list rows in ~7ms is not a render burst; typing that mounts suggestions is not a keystroke loop", () => {
+    const open = new TraceBuilder();
+    open.trigger("click", 0);
+    open.commitAt(5, ["List", ...rows], { phase: "mount", durationMs: 0.7, selfDurationMs: 0.7 });
+    const typing = new TraceBuilder();
+    typing.trigger("keydown", 1000, { target: "input#q", editable: true });
+    typing.commitAt(1005, ["Suggestions", "Item0", "Item1", "Item2"], { phase: "mount", durationMs: 0.5, selfDurationMs: 0.5 });
+    const insights = run([...open.events, ...typing.events]);
+    expect(ofType(insights, "interaction-induced-render-burst")).toHaveLength(0);
+    expect(ofType(insights, "keystroke-render-loop")).toHaveLength(0);
+  });
+
+  it("positive: the same rows re-rendering are still a burst, and mounts mixed in are not counted", () => {
+    const b = new TraceBuilder();
+    b.trigger("click", 0);
+    b.commitAt(5, ["List", ...rows], { durationMs: 0.7, selfDurationMs: 0.7 });
+    b.commitAt(9, ["NewBadge", "NewIcon"], { phase: "mount", durationMs: 0.5, selfDurationMs: 0.5 });
+    const [burst] = ofType(run(b.events), "interaction-induced-render-burst");
+    expect(burst).toBeDefined();
+    expect(burst!.metadata?.renderCount).toBe(11);
+    // Manual renders without a phase still count.
+    const manual = new TraceBuilder();
+    manual.trigger("click", 1000);
+    manual.commitAt(1005, rows, { phase: undefined, durationMs: 1 });
+    expect(ofType(run(manual.events), "interaction-induced-render-burst")).toHaveLength(1);
+  });
+});

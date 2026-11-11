@@ -36,7 +36,9 @@ export type UIEventType =
   | "scroll"
   | "submit"
   | "pointerdown"
-  | "pointerup";
+  | "pointerup"
+  /** A programmatic user action recorded with `startAction()` / `trackAction()` (target = action name). */
+  | "action";
 
 export interface UIEvent extends BaseEvent {
   type: "ui";
@@ -49,6 +51,13 @@ export interface UIEvent extends BaseEvent {
   domTimestamp?: number;
   /** True when this event started a new causal trace. */
   startsTrace?: boolean;
+  /**
+   * keydown / input / change only (v0.4): true when the target takes text entry
+   * (text-like input, textarea, contenteditable, role textbox / searchbox /
+   * combobox). Decided at capture time from the element type, never its value.
+   * Absent from older engines and manual events.
+   */
+  editable?: boolean;
 }
 
 // ── Render Events ────────────────────────────────────────────────────

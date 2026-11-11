@@ -5,7 +5,8 @@
 
 import type { TrackedEvent } from "./types/events.js";
 import type { Insight, PerformanceBudgets, SessionSummary, TraceSummary } from "./types/insights.js";
-import { ENGINE_VERSION, type EngineMode, type HelloPayload, type PerfSnapshot } from "./types/protocol.js";
+import type { WebVitals } from "./types/vitals.js";
+import { ENGINE_VERSION, type EngineMode, type PerfSnapshot } from "./types/protocol.js";
 import { analyzeContext } from "./analyzer/engine.js";
 import { buildAnalysisContext, DEFAULT_INTERACTION_WINDOW_MS } from "./analyzer/context.js";
 import { resolveBudgets } from "./analyzer/budgets.js";
@@ -28,15 +29,19 @@ import { startEventTracking } from "./tracker/eventTracker.js";
 import { startNetworkTracking } from "./tracker/networkTracker.js";
 import { startPerformanceTracking } from "./tracker/performanceTracker.js";
 import { setRenderTrackingEnabled } from "./tracker/renderTracker.js";
-import { generateSessionId, setCurrentSessionId } from "./tracker/id.js";
+import { emptyWebVitals, startWebVitalsTracking, type WebVitalsTracker } from "./tracker/webVitals.js";
+import { generateSessionId, getCurrentSessionId, setCurrentSessionId } from "./tracker/id.js";
 import { getTimeOrigin, now } from "./tracker/time.js";
 import { resetTraceContext, runDetached } from "./trace/traceContext.js";
+import { setActionTrackingEnabled } from "./trace/actions.js";
 import { getReactInstrumentationStatus, isReactInstrumented } from "./react/instrumentReact.js";
 import { startDevtoolsBridge } from "./bridge/devtoolsBridge.js";
 import { clearEngineGlobal, COPY_TOKEN, readEngineGlobal, writeEngineGlobal } from "./runtime/engineGlobal.js";
 
 export interface DevtoolsOptions {
+  /** Min interval between streamed snapshots, ms. Default 1000 (min 100). */
   snapshotIntervalMs?: number;
+  /** Events per streamed snapshot. Default 1500. */
   maxEvents?: number;
 }
 
@@ -51,9 +56,17 @@ export interface PerfEngineConfig {
   trackLongTasks?: boolean;
   /** Default true — Event Timing API (INP-style latency). */
   trackInteractions?: boolean;
-  /** Default 2000. */
+  /** Default true — Core Web Vitals (LCP, INP, CLS, FCP, TTFB) with attribution, see `getWebVitals()`. */
+  trackWebVitals?: boolean;
+  /**
+   * Share of page loads that record anything, 0..1 (default 1). Decided once
+   * per `initPerfEngine` call; an unsampled session installs nothing, stays
+   * empty and reports `sampled: false`.
+   */
+  sampleRate?: number;
+  /** Default 2000 (min 50). */
   analysisIntervalMs?: number;
-  /** Default 2000 (min 100), reset per session. */
+  /** Default 2000 (100..50 000), reset per session. */
   maxEvents?: number;
   budgets?: Partial<PerformanceBudgets>;
   customRules?: AnalysisRule[];
@@ -77,7 +90,15 @@ export interface SnapshotOptions {
   maxEvents?: number;
 }
 
-export type PerfEngineFeatures = Omit<HelloPayload["config"], "react" | "mode">;
+/** Resolved tracker flags (all false for an unsampled session). */
+export interface PerfEngineFeatures {
+  trackEvents: boolean;
+  trackNetwork: boolean;
+  trackRenders: boolean;
+  trackLongTasks: boolean;
+  trackInteractions: boolean;
+  trackWebVitals: boolean;
+}
 
 export interface PerfEngineSession {
   readonly sessionId: string;
@@ -85,18 +106,22 @@ export interface PerfEngineSession {
   readonly mode: EngineMode;
   /** Resolved tracker flags. */
   readonly features: Readonly<PerfEngineFeatures>;
+  /** False when `sampleRate` excluded this page load (nothing is recorded). */
+  readonly sampled: boolean;
   analyzeNow(): Insight[];
   getInsights(): Insight[];
   getEvents(): TrackedEvent[];
   getTraces(): TraceSummary[];
   getSummary(): SessionSummary;
+  /** Core Web Vitals of the page so far (page-lifetime: not reset by `clear()`). */
+  getWebVitals(): WebVitals;
   getSnapshot(options?: SnapshotOptions): PerfSnapshot;
   getBudgets(): PerformanceBudgets;
   setBudgets(budgets: Partial<PerformanceBudgets>): void;
   pause(): void;
   resume(): void;
   isPaused(): boolean;
-  /** Clears events + insights, keeps trackers. */
+  /** Clears events + insights, keeps trackers (and Web Vitals, which are page state). */
   clear(): void;
   /** Fires after each analysis tick that processed new data. */
   subscribe(listener: (snapshot: PerfSnapshot) => void): () => void;
@@ -104,13 +129,37 @@ export interface PerfEngineSession {
   onReset(listener: () => void): () => void;
   /** Cheap token that changes whenever the snapshot content would change. */
   getChangeSignature(): string;
-  /** Idempotent. */
+  /**
+   * Idempotent. Uninstalls trackers and the bridge. A stopped session keeps
+   * its last results; once a newer session started, it no longer reads or
+   * changes the shared event store (pause/resume/clear become no-ops).
+   */
   stop(): void;
 }
 
 const DEFAULT_ANALYSIS_INTERVAL_MS = 2000;
+const MIN_ANALYSIS_INTERVAL_MS = 50;
+/** setInterval treats larger delays (and Infinity) as 0, i.e. a busy loop. */
+const MAX_TIMER_MS = 2_147_483_647;
 const DEFAULT_SNAPSHOT_EVENTS = 1500;
 const MAX_TRACES = 100;
+
+/** `value` when it is a finite number, else `fallback` (untyped / NaN config must not disable a bound). */
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** Sampling decision for `sampleRate` (non-finite = 1). */
+export function isSampledIn(sampleRate: number | undefined, random: () => number = Math.random): boolean {
+  const rate = finiteOr(sampleRate, 1);
+  if (rate >= 1) return true;
+  if (rate <= 0) return false;
+  try {
+    return random() < rate;
+  } catch {
+    return true;
+  }
+}
 
 let activeSession: PerfEngineSession | null = null;
 
@@ -152,23 +201,28 @@ function stopForeignSession(debug: boolean): void {
   if (readEngineGlobal() === registered) clearEngineGlobal(registered.sessionId);
 }
 
-export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession {
+export function initPerfEngine(userConfig: PerfEngineConfig = {}): PerfEngineSession {
+  // Untyped callers (plain JS, a config loaded from JSON) may pass null.
+  const config: PerfEngineConfig = userConfig !== null && typeof userConfig === "object" ? userConfig : {};
   activeSession?.stop();
   const mode: EngineMode = config.mode === "injected" ? "injected" : "app";
-  stopForeignSession(config.debug ?? false);
-
   const debug = config.debug ?? false;
+  const sampled = isSampledIn(config.sampleRate);
+  // An unsampled app session must not shut down an engine it does not replace.
+  if (sampled) stopForeignSession(debug);
+
   const sessionId = generateSessionId();
   setCurrentSessionId(sessionId);
-  resetStore(config.maxEvents ?? DEFAULT_MAX_STORE_SIZE);
+  resetStore(finiteOr(config.maxEvents, DEFAULT_MAX_STORE_SIZE));
   resetTraceContext();
 
   const features: PerfEngineFeatures = Object.freeze({
-    trackEvents: config.trackEvents ?? true,
-    trackNetwork: config.trackNetwork ?? true,
-    trackRenders: config.trackRenders ?? true,
-    trackLongTasks: config.trackLongTasks ?? true,
-    trackInteractions: config.trackInteractions ?? true,
+    trackEvents: sampled && (config.trackEvents ?? true),
+    trackNetwork: sampled && (config.trackNetwork ?? true),
+    trackRenders: sampled && (config.trackRenders ?? true),
+    trackLongTasks: sampled && (config.trackLongTasks ?? true),
+    trackInteractions: sampled && (config.trackInteractions ?? true),
+    trackWebVitals: sampled && (config.trackWebVitals ?? true),
   });
 
   const cleanups: Array<() => void> = [];
@@ -185,11 +239,31 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
   if (features.trackLongTasks || features.trackInteractions) {
     guard(() => startPerformanceTracking({ longTasks: features.trackLongTasks, interactions: features.trackInteractions }));
   }
+  let vitalsTracker: WebVitalsTracker | null = null;
+  if (features.trackWebVitals) {
+    guard(() => {
+      const tracker = startWebVitalsTracking();
+      vitalsTracker = tracker;
+      return () => tracker.stop();
+    });
+  }
   setRenderTrackingEnabled(features.trackRenders);
+  setActionTrackingEnabled(sampled);
+  /** False once a newer session took over the module-level store (see `stop()`). */
+  const ownsStore = (): boolean => getCurrentSessionId() === sessionId;
+  const vitalsRevision = (): number => (vitalsTracker as WebVitalsTracker | null)?.revision() ?? 0;
+  const readVitals = (): WebVitals => {
+    try {
+      return (vitalsTracker as WebVitalsTracker | null)?.read() ?? emptyWebVitals();
+    } catch {
+      return emptyWebVitals();
+    }
+  };
 
-  const rules: readonly AnalysisRule[] = config.replaceDefaultRules
-    ? (config.customRules ?? [])
-    : insertBeforeBudgetRule(defaultRules, config.customRules ?? []);
+  const customRules = Array.isArray(config.customRules)
+    ? config.customRules.filter((rule): rule is AnalysisRule => rule !== null && typeof rule === "object" && typeof rule.run === "function")
+    : [];
+  const rules: readonly AnalysisRule[] = config.replaceDefaultRules ? customRules : insertBeforeBudgetRule(defaultRules, customRules);
   const interactionWindowMs = config.interactionWindowMs ?? DEFAULT_INTERACTION_WINDOW_MS;
   let budgets = resolveBudgets(config.budgets);
   let budgetsRev = 0;
@@ -200,6 +274,7 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
   let traces: TraceSummary[] = [];
   let analyzedVersion = -1;
   let analyzedBudgetsRev = -1;
+  let notifiedVitalsRev = 0;
   let analyzing = false;
   let stopped = false;
   const listeners = new Set<(snapshot: PerfSnapshot) => void>();
@@ -238,8 +313,15 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
   };
 
   const runAnalysis = (force: boolean, mode: Notify): void => {
-    if (analyzing) return;
+    // A replaced session keeps its last results instead of analysing another session's events.
+    if (analyzing || !ownsStore()) return;
     const version = getStoreVersion();
+    // Web Vitals live outside the store: a change only needs a new snapshot, not a new analysis.
+    const vitalsRev = vitalsRevision();
+    if (vitalsRev !== notifiedVitalsRev) {
+      notifiedVitalsRev = vitalsRev;
+      pendingSnapshot = true;
+    }
     if (!force && version === analyzedVersion && budgetsRev === analyzedBudgetsRev && summary) {
       if (mode !== "defer" && (pendingInsights || pendingSnapshot)) notify(mode);
       return;
@@ -268,7 +350,7 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
   };
 
   const ensureFresh = (): void => {
-    if (!analyzing && (getStoreVersion() !== analyzedVersion || budgetsRev !== analyzedBudgetsRev || !summary)) {
+    if (!analyzing && ownsStore() && (getStoreVersion() !== analyzedVersion || budgetsRev !== analyzedBudgetsRev || !summary)) {
       runAnalysis(false, "defer");
     }
   };
@@ -281,25 +363,30 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
 
   const getSnapshot = (options: SnapshotOptions = {}): PerfSnapshot => {
     ensureFresh();
+    const owner = ownsStore();
     const stats = getStoreStats();
+    const requested = options.maxEvents;
+    const maxEvents = typeof requested === "number" && !Number.isNaN(requested) ? Math.max(0, requested) : DEFAULT_SNAPSHOT_EVENTS;
     return {
       sessionId,
       engineVersion: ENGINE_VERSION,
       capturedAt: now(),
       timeOrigin: getTimeOrigin(),
-      paused: stats.paused,
+      paused: owner && stats.paused,
       insights: insights.slice(),
-      events: getRecentEvents(Math.max(0, options.maxEvents ?? DEFAULT_SNAPSHOT_EVENTS)),
-      droppedEvents: stats.droppedEvents,
+      events: owner ? getRecentEvents(maxEvents) : [],
+      droppedEvents: owner ? stats.droppedEvents : 0,
       traces: traces.slice(),
       summary: getSummary(),
       budgets: { ...budgets },
+      vitals: readVitals(),
     };
   };
 
-  const intervalMs = Math.max(50, config.analysisIntervalMs ?? DEFAULT_ANALYSIS_INTERVAL_MS);
+  const intervalMs = Math.min(MAX_TIMER_MS, Math.max(MIN_ANALYSIS_INTERVAL_MS, finiteOr(config.analysisIntervalMs, DEFAULT_ANALYSIS_INTERVAL_MS)));
   let reactChecked = false;
-  const intervalId: ReturnType<typeof setInterval> = setInterval(() => {
+  // An unsampled session has nothing to analyse: no timer at all.
+  const intervalId: ReturnType<typeof setInterval> | undefined = !sampled ? undefined : setInterval(() => {
     if (debug && !reactChecked && features.trackRenders) {
       reactChecked = true;
       if (getReactInstrumentationStatus() === "waiting") {
@@ -316,7 +403,7 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
     }
   }, intervalMs);
   // Do not keep Node (SSR/tests) processes alive.
-  (intervalId as { unref?: () => void }).unref?.();
+  (intervalId as { unref?: () => void } | undefined)?.unref?.();
 
   let stopBridge: () => void = () => undefined;
 
@@ -324,6 +411,7 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
     sessionId,
     mode,
     features,
+    sampled,
     analyzeNow(): Insight[] {
       runAnalysis(true, "now");
       return insights.slice();
@@ -332,12 +420,13 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
       ensureFresh();
       return insights.slice();
     },
-    getEvents,
+    getEvents: (): TrackedEvent[] => (ownsStore() ? getEvents() : []),
     getTraces(): TraceSummary[] {
       ensureFresh();
       return traces.slice();
     },
     getSummary,
+    getWebVitals: readVitals,
     getSnapshot,
     getBudgets: () => ({ ...budgets }),
     setBudgets(partial: Partial<PerformanceBudgets>): void {
@@ -345,10 +434,15 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
       budgetsRev += 1;
       runAnalysis(true, "now");
     },
-    pause: () => setStorePaused(true),
-    resume: () => setStorePaused(false),
-    isPaused: isStorePaused,
+    pause: (): void => {
+      if (ownsStore()) setStorePaused(true);
+    },
+    resume: (): void => {
+      if (ownsStore()) setStorePaused(false);
+    },
+    isPaused: (): boolean => ownsStore() && isStorePaused(),
     clear(): void {
+      if (!ownsStore()) return;
       clearEvents();
       runAnalysis(true, "now");
       for (const listener of Array.from(resetListeners)) safeCall(listener, undefined, debug);
@@ -365,11 +459,11 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
         resetListeners.delete(listener);
       };
     },
-    getChangeSignature: () => `${getStoreVersion()}|${budgetsRev}|${isStorePaused()}|${signature}`,
+    getChangeSignature: () => `${getStoreVersion()}|${budgetsRev}|${isStorePaused()}|${vitalsRevision()}|${signature}`,
     stop(): void {
       if (stopped) return;
       stopped = true;
-      clearInterval(intervalId);
+      if (intervalId !== undefined) clearInterval(intervalId);
       for (const cleanup of cleanups.splice(0)) {
         try {
           cleanup();
@@ -389,12 +483,13 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
         activeSession = null;
         // Global flags belong to the active session only.
         setRenderTrackingEnabled(false);
+        setActionTrackingEnabled(false);
         setStorePaused(false);
       }
     },
   };
 
-  if (config.devtools !== false && typeof window !== "undefined") {
+  if (sampled && config.devtools !== false && typeof window !== "undefined") {
     const devtoolsOptions: DevtoolsOptions = typeof config.devtools === "object" ? config.devtools : {};
     try {
       stopBridge = startDevtoolsBridge(session, {
@@ -409,7 +504,7 @@ export function initPerfEngine(config: PerfEngineConfig = {}): PerfEngineSession
   }
 
   activeSession = session;
-  writeEngineGlobal({ kind: mode, sessionId, stop: () => session.stop(), copy: COPY_TOKEN, engineVersion: ENGINE_VERSION });
+  if (sampled) writeEngineGlobal({ kind: mode, sessionId, stop: () => session.stop(), copy: COPY_TOKEN, engineVersion: ENGINE_VERSION });
   return session;
 }
 

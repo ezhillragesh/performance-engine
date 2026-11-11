@@ -40,7 +40,9 @@ describe("session lifecycle", () => {
       trackRenders: true,
       trackLongTasks: true,
       trackInteractions: true,
+      trackWebVitals: true,
     });
+    expect(session.sampled).toBe(true);
     expect(isRenderTrackingEnabled()).toBe(true);
     expect(session.getSnapshot().engineVersion).toBe(ENGINE_VERSION);
   });

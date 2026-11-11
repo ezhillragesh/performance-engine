@@ -10,7 +10,9 @@
 import type { TrackedEvent } from "../types/events.js";
 
 export const DEFAULT_MAX_STORE_SIZE = 2000;
-const MIN_STORE_SIZE = 100;
+export const MIN_STORE_SIZE = 100;
+/** Hard upper bound: the store is memory the host page pays for. */
+export const MAX_STORE_SIZE = 50_000;
 
 let events: TrackedEvent[] = [];
 let maxSize = DEFAULT_MAX_STORE_SIZE;
@@ -33,8 +35,14 @@ export interface StoreStats {
   version: number;
 }
 
+/**
+ * Sets the capacity, clamped to [MIN_STORE_SIZE, MAX_STORE_SIZE]. A value that
+ * is not a finite number (NaN, Infinity, a string from untyped config) falls
+ * back to the default instead of disabling the bound.
+ */
 export function setMaxStoreSize(size: number): void {
-  maxSize = Math.max(MIN_STORE_SIZE, Math.floor(size));
+  const requested = typeof size === "number" && Number.isFinite(size) ? Math.floor(size) : DEFAULT_MAX_STORE_SIZE;
+  maxSize = Math.min(MAX_STORE_SIZE, Math.max(MIN_STORE_SIZE, requested));
   if (events.length > maxSize) {
     const excess = events.length - maxSize;
     events = events.slice(excess);
@@ -75,8 +83,17 @@ function insert(event: TrackedEvent): void {
   }
 }
 
-/** Records an event. Returns false when dropped (paused). */
+/**
+ * The store is ordered by `timestamp`; one NaN would break the binary search
+ * for every later insert, so events without a finite timestamp are rejected.
+ */
+function isStorable(event: TrackedEvent | null | undefined): event is TrackedEvent {
+  return typeof event === "object" && event !== null && typeof event.timestamp === "number" && Number.isFinite(event.timestamp);
+}
+
+/** Records an event. Returns false when dropped (paused or malformed). */
 export function pushEvent(event: TrackedEvent): boolean {
+  if (!isStorable(event)) return false;
   if (paused) {
     pausedDropCount += 1;
     return false;
@@ -94,21 +111,25 @@ export function pushEvents(batch: readonly TrackedEvent[]): number {
     pausedDropCount += batch.length;
     return 0;
   }
+  let stored = 0;
   for (const event of batch) {
+    if (!isStorable(event)) continue;
     trimIfFull();
     insert(event);
+    stored += 1;
   }
-  version += 1;
-  return batch.length;
+  if (stored > 0) version += 1;
+  return stored;
 }
 
 export function getEvents(): TrackedEvent[] {
   return events.slice();
 }
 
-/** Most recent `count` events (sorted by timestamp). */
+/** Most recent `count` events (sorted by timestamp). Infinity / NaN return all of them. */
 export function getRecentEvents(count: number): TrackedEvent[] {
-  return count >= events.length ? events.slice() : events.slice(events.length - count);
+  const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : events.length;
+  return n >= events.length ? events.slice() : events.slice(events.length - n);
 }
 
 export function getEventCount(): number {

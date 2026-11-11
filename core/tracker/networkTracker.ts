@@ -3,7 +3,9 @@
  *
  * - The active trace id is captured when the request *starts*; the trace is
  *   re-activated when the response is delivered so work caused by the
- *   response (renders) is attributed causally.
+ *   response (renders) is attributed causally. A request without a trace
+ *   delivers its response with no trace (`enterResponseContext`), never the
+ *   interaction that happens to be live.
  * - URLs are sanitised (no query values, no origin for same-origin requests).
  * - fetch resolves at response *headers*; the body may still be downloading.
  *   In browsers the event is therefore recorded once the request's
@@ -16,7 +18,7 @@
 
 import type { HttpMethod, NetworkEvent } from "../types/events.js";
 import { pushEvent } from "../logger/store.js";
-import { activateTrace, captureTraceId } from "../trace/traceContext.js";
+import { captureTraceId, enterResponseContext } from "../trace/traceContext.js";
 import { generateEventId, getCurrentSessionId } from "./id.js";
 import { now } from "./time.js";
 
@@ -224,10 +226,14 @@ let pendingFetches: PendingFetch[] = [];
 let resourceObserver: { disconnect(): void } | null = null;
 
 function resourceTimingObservable(): boolean {
-  // Browsers only: Node exposes PerformanceObserver but not for patched fetches.
-  if (typeof document === "undefined" || typeof PerformanceObserver === "undefined") return false;
-  const types = (PerformanceObserver as unknown as { supportedEntryTypes?: readonly string[] }).supportedEntryTypes;
-  return Array.isArray(types) && types.includes("resource");
+  try {
+    // Browsers only: Node exposes PerformanceObserver but not for patched fetches.
+    if (typeof document === "undefined" || typeof PerformanceObserver === "undefined") return false;
+    const types = (PerformanceObserver as unknown as { supportedEntryTypes?: readonly string[] }).supportedEntryTypes;
+    return Array.isArray(types) && types.includes("resource");
+  } catch {
+    return false;
+  }
 }
 
 function flushPending(item: PendingFetch, match?: ResourceMatch): void {
@@ -324,18 +330,28 @@ function installFetch(): void {
     const m = meta;
     return pending.then(
       (response) => {
-        const outcome: Outcome = { status: response.status };
-        const len = contentLength(response);
-        if (len !== undefined) outcome.responseSize = len;
-        if (!response.ok && response.status >= 400) outcome.error = `HTTP ${response.status}`;
-        recordFetch(m, outcome);
-        // Response window: the caller's continuation runs next and inherits the trace.
-        if (m.traceId) activateTrace(m.traceId);
+        // Bookkeeping must never turn the app's successful fetch into a rejection.
+        try {
+          const outcome: Outcome = { status: response.status };
+          const len = contentLength(response);
+          if (len !== undefined) outcome.responseSize = len;
+          if (!response.ok && response.status >= 400) outcome.error = `HTTP ${response.status}`;
+          recordFetch(m, outcome);
+          // Response window: the caller's continuation runs next and inherits the request's
+          // trace, or no trace at all when the request had none (never the live interaction).
+          enterResponseContext(m.traceId);
+        } catch {
+          // ignore
+        }
         return response;
       },
       (err: unknown) => {
-        record(m, { status: 0, error: errorMessage(err) });
-        if (m.traceId) activateTrace(m.traceId);
+        try {
+          record(m, { status: 0, error: errorMessage(err) });
+          enterResponseContext(m.traceId);
+        } catch {
+          // ignore: the app sees its own error, not ours
+        }
         throw err;
       },
     );
@@ -395,8 +411,13 @@ function installXhr(): void {
         const onFail = (ev: Event): void => {
           failure = ev.type === "abort" ? "aborted" : ev.type === "timeout" ? "timeout" : "network error";
         };
+        // Listener errors would surface in the app's window.onerror: keep them inside.
         const onReady = (): void => {
-          if (xhr.readyState === 4 && meta.traceId) activateTrace(meta.traceId);
+          try {
+            if (xhr.readyState === 4) enterResponseContext(meta.traceId);
+          } catch {
+            // ignore
+          }
         };
         const cleanup = (): void => {
           meta.cleanup = undefined;
@@ -407,11 +428,15 @@ function installXhr(): void {
           xhr.removeEventListener("timeout", onFail);
         };
         const onDone = (): void => {
-          cleanup();
-          const outcome: Outcome = { status: xhr.status };
-          if (failure) outcome.error = failure;
-          else if (xhr.status >= 400) outcome.error = `HTTP ${xhr.status}`;
-          record(meta, outcome);
+          try {
+            cleanup();
+            const outcome: Outcome = { status: xhr.status };
+            if (failure) outcome.error = failure;
+            else if (xhr.status >= 400) outcome.error = `HTTP ${xhr.status}`;
+            record(meta, outcome);
+          } catch {
+            // ignore
+          }
         };
         this.addEventListener("readystatechange", onReady);
         this.addEventListener("error", onFail);

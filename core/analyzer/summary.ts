@@ -12,7 +12,7 @@ import type {
   SessionSummary,
   Severity,
 } from "../types/insights.js";
-import { buildAnalysisContext, type AnalysisContext } from "./context.js";
+import { buildAnalysisContext, isActionTrace, type AnalysisContext } from "./context.js";
 import { DEFAULT_BUDGETS, evaluateBudgets, interactionLatencySamples } from "./budgets.js";
 import { isBlockingTask, renderCost } from "./interactions.js";
 import { max, percentile } from "./stats.js";
@@ -111,7 +111,10 @@ export function topRequests(context: AnalysisContext, limit = TOP_N): RequestSta
 export function countInteractions(context: AnalysisContext): number {
   const ids = new Set<number>();
   for (const t of context.interactionTimings) if (t.interactionId > 0) ids.add(t.interactionId);
-  return ids.size > 0 ? ids.size : context.traces.length;
+  if (ids.size > 0) return ids.size;
+  let traces = 0;
+  for (const trace of context.traces) if (!isActionTrace(trace)) traces += 1;
+  return traces;
 }
 
 function isContext(input: readonly TrackedEvent[] | AnalysisContext): input is AnalysisContext {

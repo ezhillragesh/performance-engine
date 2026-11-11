@@ -155,6 +155,7 @@ export function traceEvidence(trace: InteractionTrace, eventIds: string[]): Evid
 
 export function traceTriggerText(trace: InteractionTrace): string {
   const t = trace.committedTrigger;
+  if (t.eventType === "action") return `action "${t.target}"`;
   return `${t.eventType} on ${t.label ? `"${t.label}" (${t.target})` : t.target}`;
 }
 

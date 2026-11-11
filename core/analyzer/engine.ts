@@ -35,8 +35,22 @@ function normalise(insight: Insight): Insight {
   const evidence = Array.isArray(insight.evidence) ? insight.evidence : [];
   const confidence = Number.isFinite(insight.confidence) ? Math.max(0, Math.min(MAX_CONFIDENCE, insight.confidence)) : 0;
   const severity: Severity = SEVERITIES.has(insight.severity) ? insight.severity : "medium";
-  const impact = insight.impact ?? { estimatedDelayMs: 0 };
-  const normalised: Insight = { ...insight, evidence, confidence, severity, impact, category: insight.category ?? "rendering" };
+  const delay = insight.impact?.estimatedDelayMs;
+  const impact = insight.impact && typeof delay === "number" && Number.isFinite(delay) ? insight.impact : { ...insight.impact, estimatedDelayMs: 0 };
+  const text = (value: unknown, fallback: string): string => (typeof value === "string" ? value : fallback);
+  const normalised: Insight = {
+    ...insight,
+    // Custom rules are untyped at runtime: the merge key, signatures and the panel rely on strings.
+    source: text(insight.source, "unknown"),
+    message: text(insight.message, ""),
+    cause: text(insight.cause, ""),
+    possibleFix: text(insight.possibleFix, ""),
+    evidence,
+    confidence,
+    severity,
+    impact,
+    category: insight.category ?? "rendering",
+  };
   normalised.id = getInsightId(normalised);
   return normalised;
 }

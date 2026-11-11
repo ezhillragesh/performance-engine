@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startEventTracking } from "../tracker/eventTracker.js";
-import { describeLabel, describeTarget } from "../tracker/dom.js";
+import { describeLabel, describeTarget, isTextEntryTarget } from "../tracker/dom.js";
 import { getEvents, resetStore } from "../logger/store.js";
 import { resetTraceContext } from "../trace/traceContext.js";
 import { setTimeSource } from "../tracker/time.js";
@@ -94,5 +94,38 @@ describe("event tracker", () => {
     stop();
     document.getElementById("save")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(uiEvents()).toHaveLength(0);
+  });
+});
+
+describe("text-entry targets (editable flag)", () => {
+  it("isTextEntryTarget: text-like inputs, textarea, contenteditable and text roles only", () => {
+    document.body.innerHTML = `
+      <input id="a" /><input id="b" type="search" /><input id="c" type="checkbox" /><input id="d" type="range" />
+      <textarea id="e"></textarea><select id="f"><option>x</option></select>
+      <div id="g" contenteditable="true"><span id="h">typed</span></div><div id="i" contenteditable="false"></div>
+      <div id="j" role="searchbox"></div><div id="k" role="combobox listbox"></div>
+      <button id="l" role="tab">Tab</button>`;
+    const is = (id: string): boolean => isTextEntryTarget(document.getElementById(id));
+    expect(["a", "b", "e", "g", "h", "j", "k"].filter(is)).toEqual(["a", "b", "e", "g", "h", "j", "k"]);
+    expect(["c", "d", "f", "i", "l"].filter(is)).toEqual([]);
+    expect(isTextEntryTarget(document.body)).toBe(false);
+    expect(isTextEntryTarget(document)).toBe(false);
+    expect(isTextEntryTarget(null)).toBe(false);
+  });
+
+  it("records editable on keydown / input / change at capture time, not on clicks", () => {
+    document.getElementById("name")!.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "k", bubbles: true }));
+    document.getElementById("save")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    document.getElementById("save")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const events = uiEvents();
+    expect(events.map((e) => [e.eventType, e.editable])).toEqual([
+      ["keydown", true],
+      ["keydown", false],
+      ["keydown", false],
+      ["click", undefined],
+    ]);
+    // Only the type decides: the value is never read.
+    expect(JSON.stringify(events)).not.toContain("secret");
   });
 });

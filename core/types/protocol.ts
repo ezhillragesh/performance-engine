@@ -4,8 +4,10 @@
 
 import type { TrackedEvent } from "./events.js";
 import type { Insight, PerformanceBudgets, SessionSummary, TraceSummary } from "./insights.js";
+import type { WebVitals } from "./vitals.js";
 
-export const ENGINE_VERSION = "0.3.0";
+/** Version of this engine (= the npm package version), reported in HELLO and snapshots. */
+export const ENGINE_VERSION = "0.4.0";
 export const PROTOCOL_VERSION = 2;
 export const PAGE_MESSAGE_SOURCE = "perf-engine";
 export const PANEL_MESSAGE_SOURCE = "perf-engine-devtools";
@@ -28,6 +30,11 @@ export interface PerfSnapshot {
   traces: TraceSummary[];
   summary: SessionSummary;
   budgets: PerformanceBudgets;
+  /**
+   * Core Web Vitals measured by the engine (v0.4+, absent from older engines).
+   * Same flat fields as the DevTools collector's vitals plus `attribution`.
+   */
+  vitals?: WebVitals;
 }
 
 /** Which engine copy is talking: the app's own bundle or the extension-injected one. */
@@ -45,6 +52,8 @@ export interface HelloPayload {
     trackRenders: boolean;
     trackLongTasks: boolean;
     trackInteractions: boolean;
+    /** v0.4+. Absent from older engines. */
+    trackWebVitals?: boolean;
     react: boolean;
     /** v2.1+. Absent from older engines: treat as "app". */
     mode?: EngineMode;

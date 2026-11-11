@@ -4,7 +4,7 @@
 
 import type { BudgetKey, BudgetResult, BudgetStatus, PerformanceBudgets } from "../types/insights.js";
 import type { AnalysisContext } from "./context.js";
-import { collapseRendersPerCommit } from "./context.js";
+import { collapseRendersPerCommit, isActionTrace } from "./context.js";
 import { firstCommitAfterInput, groupInteractionTimings, inputStart, renderCost, taskLengthMs } from "./interactions.js";
 import { max, percentile } from "./stats.js";
 
@@ -93,6 +93,7 @@ export function interactionLatencySamples(context: AnalysisContext): number[] {
   if (timings.length > 0) return timings.map((t) => t.duration);
   const samples: number[] = [];
   for (const trace of context.traces) {
+    if (isActionTrace(trace)) continue; // programmatic, not an input
     const commit = firstCommitAfterInput(trace);
     if (commit) samples.push(Math.max(0, commit.timestamp - inputStart(trace)));
   }
