@@ -8,6 +8,10 @@ eslint-plugin-a11yinspect (MIT), the IBM Equal Access accessibility-checker-engi
 Deque axe-core (MPL-2.0). The extension ships this file as `extension/THIRD_PARTY_NOTICES.txt` (panel footer:
 "Open-source credits").
 
+The npm package `performance-engine` (`core/`) contains the a11yinspect port and the adapters for the other
+two engines, and ships this file as `dist/THIRD_PARTY_NOTICES.md`. It does not contain or depend on the IBM
+or axe-core engines: an application that wants them installs and passes them in itself.
+
 ## BarrierBreak eslint-plugin-a11yinspect
 
 The runtime accessibility audit (`core/a11y/`, bundled as `extension/vendor/a11y-audit.js`) ports the rules of

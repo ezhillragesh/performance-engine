@@ -1,0 +1,2 @@
+# npm pack output (npm run check:package packs into a temp dir instead)
+*.tgz

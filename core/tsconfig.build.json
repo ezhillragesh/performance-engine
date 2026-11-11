@@ -2,8 +2,14 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "types": [],
-    "noEmit": false
+    "noEmit": false,
+    // Published maps must not point at files that are not in the package: JS source maps embed
+    // their sources (inlineSources), and declaration maps are off (they can only point at the
+    // .ts sources, which are not shipped).
+    "sourceMap": true,
+    "inlineSources": true,
+    "declarationMap": false
   },
   "include": ["index.ts", "session.ts", "a11y/**/*.ts", "analyzer/**/*.ts", "bridge/**/*.ts", "logger/**/*.ts", "react/**/*.ts", "runtime/**/*.ts", "trace/**/*.ts", "tracker/**/*.ts", "types/**/*.ts"],
-  "exclude": ["dist", "node_modules", "inject", "scripts", "tests", "bench", "a11y/__tests__", "a11y/browser.ts", "**/*.test.ts", "**/*.bench.ts", "vitest.config.ts"]
+  "exclude": ["dist", "node_modules", "inject", "scripts", "tests", "bench", "a11y/__tests__", "a11y/browser.ts", "**/*.test.ts", "**/*.bench.ts", "vitest.config.ts", "vitest.a11y.config.ts"]
 }

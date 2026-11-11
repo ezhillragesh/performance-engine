@@ -1,8 +1,40 @@
 {
   "name": "performance-engine",
-  "version": "0.3.0",
-  "description": "Runtime analysis engine for frontend performance intelligence.",
-  "private": false,
+  "version": "0.4.0",
+  "description": "In-browser frontend performance intelligence: causal interaction traces, React render instrumentation, evidence-based insights, Core Web Vitals, budgets and an accessibility audit. Zero dependencies.",
+  "keywords": [
+    "performance",
+    "web-performance",
+    "react",
+    "react-performance",
+    "render",
+    "profiling",
+    "core-web-vitals",
+    "web-vitals",
+    "inp",
+    "lcp",
+    "cls",
+    "long-tasks",
+    "long-animation-frames",
+    "tracing",
+    "devtools",
+    "rum",
+    "observability",
+    "accessibility",
+    "a11y",
+    "wcag"
+  ],
+  "homepage": "https://github.com/ezhillragesh/performance-engine/tree/main/core#readme",
+  "bugs": {
+    "url": "https://github.com/ezhillragesh/performance-engine/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ezhillragesh/performance-engine.git",
+    "directory": "core"
+  },
+  "license": "MIT",
+  "author": "Ezhill Ragesh",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -11,15 +43,25 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('../THIRD_PARTY_NOTICES.md','dist/THIRD_PARTY_NOTICES.md')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run test:core && npm run test:a11y",
     "test:core": "vitest run",
@@ -27,7 +69,10 @@
     "test:watch": "vitest",
     "bench": "vitest bench --run",
     "build:extension": "node scripts/build-extension.mjs",
-    "build:a11y": "node scripts/build-a11y.mjs"
+    "build:a11y": "node scripts/build-a11y.mjs",
+    "check:package": "npm run build && node scripts/check-package.mjs",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run check:package"
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",
