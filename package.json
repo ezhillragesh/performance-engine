@@ -1,0 +1,23 @@
+{
+  "name": "performance-engine-repo",
+  "private": true,
+  "description": "Repository scripts for performance-engine (core/), the Perf Intelligence DevTools extension (extension/) and the demo (demo/). Not a workspace: core/ and demo/ install their own dependencies.",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "setup": "npm --prefix core ci && npm --prefix demo ci",
+    "check": "npm run check:core && npm run check:vendor && npm run check:extension && npm run check:demo",
+    "check:core": "npm --prefix core run typecheck && npm --prefix core test && npm --prefix core run check:package",
+    "check:vendor": "node scripts/check-vendor.mjs",
+    "check:extension": "node scripts/check-extension.mjs",
+    "check:demo": "npm --prefix demo run lint && npm --prefix demo run build",
+    "e2e": "npm --prefix demo run e2e",
+    "build:extension": "npm --prefix core run build:extension",
+    "package:extension": "node scripts/package-extension.mjs",
+    "dev": "npm --prefix demo run dev",
+    "test": "npm --prefix core test",
+    "bench": "npm --prefix core run bench"
+  }
+}
