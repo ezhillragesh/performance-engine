@@ -26,7 +26,7 @@ Every message: `{ source: "perf-engine", version: 2, type, payload, timestamp }`
 
 | type | payload | when |
 |------|---------|------|
-| `HELLO` | `{ sessionId, engineVersion, url, title, timeOrigin, config: { trackEvents, trackNetwork, trackRenders, trackLongTasks, trackInteractions, react, mode? } }` | on bridge start (injected mode: after `DOMContentLoaded`, see "Deferred HELLO"), and in reply to `PING` |
+| `HELLO` | `{ sessionId, engineVersion, url, title, timeOrigin, config: { trackEvents, trackNetwork, trackRenders, trackLongTasks, trackInteractions, trackWebVitals?, react, mode? } }` | on bridge start (injected mode: after `DOMContentLoaded`, see "Deferred HELLO"), and in reply to `PING` |
 | `SNAPSHOT` | `PerfSnapshot` (below) | only while attached: throttled (default every 1000ms) **only when data changed**, plus on `REQUEST_SNAPSHOT` / `ATTACH` |
 | `RESET` | `{ sessionId }` | after `clear` command or new session |
 
@@ -43,8 +43,19 @@ interface PerfSnapshot {
   traces: TraceSummary[];      // most recent 100
   summary: SessionSummary;
   budgets: PerformanceBudgets;
+  vitals?: WebVitals;          // v0.4+: engine-measured Core Web Vitals (core/types/vitals.ts)
 }
 ```
+
+### Additive fields in engine 0.4 (protocol stays v2)
+
+All optional; older engines omit them and the panel treats them as absent.
+
+- `HELLO.config.trackWebVitals?: boolean`: the engine measures Web Vitals itself.
+- `PerfSnapshot.vitals?: WebVitals`: `{ lcp, lcpTarget, cls, inp, fcp, ttfb, interactions, attribution: { lcp?: { target, url?, startTime }, cls?: { target?, startTime, value }, inp?: { name, target, interactionId, startTime, inputDelay, processingMs, presentationDelay, traceId? } } }`. Same flat fields as the panel's collector vitals. The panel validates it (`validateEngineVitals` in `validate.js`: finite non-negative numbers, capped strings) and prefers it over its own collector in app / injected mode. `attribution.inp.traceId` links the INP interaction to its causal trace ("INP trace" on the Overview). Export bundles carry it as `vitals` (attribution included).
+- `UIEvent.eventType` may be `"action"`: a programmatic action recorded with `startAction()` / `trackAction()`; `target` is the action name. Traces it starts have `trigger.eventType: "action"`.
+- `UIEvent.editable?: boolean`: set on `keydown` / `input` / `change` at capture time from the element type only (text-like input, textarea, contenteditable, text role), never its value. The keystroke rule only fires on text-entry targets; events without the flag (older engines) fall back to an `input` / `textarea` tag in `target`.
+- `TraceSummary.action?: string` (≤ 80 chars): the first named action recorded in the trace. The Traces view shows it next to the trigger.
 
 Legacy v1 messages (`INSIGHTS_UPDATE`, `EVENTS_UPDATE`) may still be accepted by the panel for backward compatibility but are no longer produced.
 
@@ -68,6 +79,8 @@ Panel -> background: `DEVTOOLS_INIT { tabId }`, `REQUEST_SNAPSHOT`, `PANEL_COMMA
 Background also sends `ATTACH` to the tab when its first panel port connects and `DETACH` when its last port disconnects — and whenever a `SNAPSHOT` arrives for a tab with no connected panel (a stream orphaned by a service-worker restart). An orphaned content script (extension reloaded/updated) posts `DETACH` to the page when it tears down. When a `HELLO` arrives (e.g. page reloaded while DevTools is open) and the tab has a connected panel, background resets that tab's stored state if the `sessionId` changed and immediately sends `ATTACH` back so streaming resumes.
 
 Background -> panel: `PERF_MESSAGE { payload: PageMessage }`, `TAB_NAVIGATED { url }`, `CONNECTION { engineDetected: boolean }`.
+
+Extension pages (the toolbar popup) talk to background with `chrome.runtime.sendMessage` instead of a port; see "Toolbar popup" below. Background tells them apart from content scripts by `sender.url` starting with the extension's own origin (`chrome.runtime.getURL("")`).
 
 ## Invariants
 
@@ -94,16 +107,17 @@ The panel works in three modes. `HELLO.config.mode` tells the panel which engine
 
 Every core copy registers `globalThis.__PERF_ENGINE_GLOBAL__ = { kind: "app" | "injected", sessionId, stop }` when a session starts. `initPerfEngine` stops a session registered by *another* copy before starting its own, so an app engine always replaces an injected one and only one bridge ever talks to the extension. The injected bundle does nothing if an `"app"` engine is already registered.
 
-### Injection control (panel ⇄ background, port `devtools`)
+### Injection control (panel ⇄ background, port `devtools`; popup ⇄ background, runtime messages)
 
-Panel → background messages are flat: `{ type, tabId, origin, removePermission?, payload: { origin } }` (`payload` is a legacy copy; background reads the top-level `origin`). `origin` must be exactly `http(s)://host[:port]` (no path, query, hash or credentials), otherwise bg replies at once with `error: "invalid-origin"`.
+Panel → background messages are flat: `{ type, tabId, origin, removePermission?, payload: { origin } }` (`payload` is a legacy copy; background reads the top-level `origin`). The popup sends the same messages (without `payload`) with `chrome.runtime.sendMessage` and gets the `INJECTION_STATUS` reply through `sendResponse`; the port's `tabId` comes from `DEVTOOLS_INIT`, the popup's from the message. `origin` must be exactly `http(s)://host[:port]` (no path, query, hash or credentials), otherwise bg replies at once with `error: "invalid-origin"`. `ENABLE_INJECTION` for a Chrome Web Store origin (`chromewebstore.google.com`, `chrome.google.com`, where Chrome never runs extension scripts) replies at once with `error: "restricted-origin"`.
 
 | Message | Direction | Fields | Effect |
 |---------|-----------|--------|--------|
 | `INJECTION_STATUS_REQUEST` | panel → bg | `origin` | bg replies `INJECTION_STATUS` |
-| `ENABLE_INJECTION` | panel → bg | `origin` | Panel first calls `chrome.permissions.request({ origins: [origin + "/*"] })` in the click handler (user gesture). bg checks the permission, then `chrome.scripting.registerContentScripts` (id `perf-inject:<origin>` with non `[A-Za-z0-9.-]` chars hex-escaped, `world: "MAIN"`, `runAt: "document_start"`, `persistAcrossSessions: true`), reloads the tab, replies `INJECTION_STATUS`. Without the permission nothing is registered and the reply has `enabled: false` |
-| `DISABLE_INJECTION` | panel → bg | `origin`, `removePermission?: boolean` | Unregisters the script; when `removePermission === true` also `chrome.permissions.remove`s the site's host permission (failures ignored). Reloads the tab, replies `INJECTION_STATUS` |
-| `INJECTION_STATUS` | bg → panel | see below | Reply to each of the above |
+| `INJECTION_INTENT` | panel / popup → bg | `origin` | Sent right before `chrome.permissions.request`. bg records `{ tabId, at }` for the origin in `chrome.storage.session` (`inject-intents`, expires after 5 min; the service worker may stop while Chrome's prompt is open). When `chrome.permissions.onAdded` later reports a grant covering a recorded origin (the popup closed with the prompt, or the user granted the site from the Extensions menu after the DevTools prompt failed), bg runs `ENABLE_INJECTION` for it itself. No reply on the port; the popup gets `{ type: "OK" }` |
+| `ENABLE_INJECTION` | panel / popup → bg | `origin` | Caller first calls `chrome.permissions.request({ origins: [origin + "/*"] })` in the click handler (user gesture). bg consumes the origin's intent, checks the permission, then `chrome.scripting.registerContentScripts` (id `perf-inject:<origin>` with non `[A-Za-z0-9.-]` chars hex-escaped, `world: "MAIN"`, `runAt: "document_start"`, `persistAcrossSessions: true`; `updateContentScripts` when already registered), reloads the tab **only when the script was newly registered**, replies `INJECTION_STATUS`. Without the permission nothing is registered and the reply has `enabled: false` |
+| `DISABLE_INJECTION` | panel / popup → bg | `origin`, `removePermission?: boolean` | Unregisters the script; when `removePermission === true` also `chrome.permissions.remove`s the site's host permission (failures ignored). Reloads the tab **only when a script was registered** (revoking access on a site without injection doesn't reload), replies `INJECTION_STATUS` |
+| `INJECTION_STATUS` | bg → panel / popup | see below | Reply to each of the above |
 
 `INJECTION_STATUS` is a flat message (no `payload` wrapper):
 
@@ -112,7 +126,7 @@ Panel → background messages are flat: `{ type, tabId, origin, removePermission
 ```
 
 - `enabled` = a content script is registered for the origin; `granted` = the host permission is present. Both are re-read after the change, so they are authoritative even when it failed.
-- `error` (max 300 chars) is set only when the change threw (e.g. `registerContentScripts` failed) or the origin was invalid (`"invalid-origin"`). The panel shows it verbatim (textContent).
+- `error` (max 300 chars) is set only when the change threw (e.g. `registerContentScripts` failed) or the origin was rejected (`"invalid-origin"`, `"restricted-origin"`). The panel and popup map those two codes to sentences and show anything else verbatim (textContent).
 - Changes are serialized in bg (duplicate script ids throw). The panel still accepts a payload-wrapped reply (`{ type, payload: { origin, enabled, granted } }`) and ignores replies whose `origin` is not the current page's.
 - Revoking site access elsewhere (`chrome.permissions.onRemoved`) also unregisters injection for that origin.
 
@@ -120,7 +134,29 @@ Panel → background messages are flat: `{ type, tabId, origin, removePermission
 
 The injected bundle starts its bridge with `deferInitialHello` (`core/bridge/devtoolsBridge.ts`): while `document.readyState === "loading"` it sends **no** HELLO and **ignores every panel command** (PING, ATTACH, …). After `DOMContentLoaded` (in a `setTimeout(0)`, so after the page's own DOMContentLoaded handlers) it sends the initial HELLO with `config.mode: "injected"`; background then sends ATTACH as for any HELLO. If an app engine starts during parsing, it replaces the injected session first, so the panel only ever sees the app engine. Consequences for the panel: in injected mode the first HELLO can arrive up to the page's parse time after navigation (the panel's no-engine timeout only switches to DevTools-only data, which the later HELLO replaces), and a PING sent during parsing is never answered.
 
-Manifest: `permissions: ["storage", "scripting"]`, `optional_host_permissions: ["<all_urls>"]`. No site access is granted until the user enables a site.
+Manifest: `permissions: ["storage", "scripting"]`, `optional_host_permissions: ["<all_urls>"]`, a static `content_scripts` entry (`contentScript.js`, `<all_urls>`, top frame, `document_start`: the relay above) and an `action` popup. No host permission for the injected engine is granted until the user enables a site. Rationale for the static relay: docs/PRIVACY.md "Permissions".
+
+### Toolbar popup (v0.4)
+
+`popup/popup.html` (classic script `popup/popup.js`, no new permissions) shows the active tab's engine status and is the reliable place to grant or revoke site access (Chrome may not show the permission prompt from inside DevTools).
+
+1. Active tab id: `chrome.tabs.query({ active: true, currentWindow: true })` (no `tabs` permission, so no URL).
+2. Origin: `chrome.tabs.sendMessage(tabId, { type: "PAGE_INFO" }, { frameId: 0 })`; the relay content script answers `{ type: "PAGE_INFO", origin: location.origin, title }` (origin and title only, never the path or query). No answer = no content script (browser pages, the Web Store, other extensions, or a tab opened before the extension was installed / updated): the popup says so and offers a reload.
+3. Status: `chrome.runtime.sendMessage({ type: "POPUP_STATUS_REQUEST", tabId, origin? })`. When bg has no HELLO for the tab it sends `PING` and waits up to 600 ms for one. Reply:
+
+```ts
+{
+  type: "POPUP_STATUS", tabId: number,
+  engine: { mode: "app" | "injected", engineVersion: string, react: boolean, sessionId: string } | null,
+  snapshot: { score: number | null, grade: string | null, insights: number,
+              insightCounts: { critical, high, medium, low } } | null, // last SNAPSHOT of the same session (only exists if a panel streamed)
+  panelOpen: boolean,
+  injection: { origin, enabled, granted } | null,               // null without a valid origin
+  restricted: boolean,                                           // Web Store origin
+}
+```
+
+4. Enable / disable: `INJECTION_INTENT`, `ENABLE_INJECTION`, `DISABLE_INJECTION` as above (the popup's "Disable" offers "Also remove site access", default on; "Remove site access" when access is granted but injection is off).
 
 ### DevTools-only layer (always on in the panel)
 
