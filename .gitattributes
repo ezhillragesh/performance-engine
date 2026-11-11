@@ -1,0 +1,26 @@
+# Normalise all text files to LF in the repository and in working trees.
+# After adding this file, run once: git add --renormalize . (then commit).
+* text=auto eol=lf
+
+# Binary files: never convert line endings, never diff as text.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.zip    binary
+*.gz     binary
+*.tgz    binary
+*.pdf    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+
+# Generated from core/ (npm run build:extension) or vendored unchanged: collapsed in GitHub diffs
+# and excluded from language statistics. Review the core sources instead; CI checks for drift.
+extension/vendor/** linguist-generated=true
+extension/THIRD_PARTY_NOTICES.txt linguist-generated=true
+core/package-lock.json linguist-generated=true
+demo/package-lock.json linguist-generated=true
